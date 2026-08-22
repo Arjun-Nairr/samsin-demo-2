@@ -52,7 +52,12 @@ def _resolve_creative(snapshot: dict) -> dict:
     elif media_type == "image":
         images = primary.get("images") or snapshot.get("images") or []
         image = images[0] if images and isinstance(images[0], dict) else {}
-        media_url = _first_http_url(image.get("url"))
+        # Real responses use original_image_url/resized_image_url, not the
+        # "url" key shown in the docs' example - confirmed against a live
+        # fetch. original_image_url preferred (full quality) over resized.
+        media_url = _first_http_url(
+            image.get("url"), image.get("original_image_url"), image.get("resized_image_url")
+        )
 
     return {
         "body": body,

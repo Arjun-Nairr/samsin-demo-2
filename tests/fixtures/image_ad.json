@@ -18,7 +18,14 @@
     "caption": "aelfriceden.com",
     "link_url": "https://aelfriceden.com/collections/new",
     "cards": [],
-    "images": [{ "url": "https://scontent.xx.fbcdn.net/ad-image-1.jpg" }],
+    "images": [
+      {
+        "image_crops": [],
+        "original_image_url": "https://scontent.xx.fbcdn.net/ad-image-1.jpg",
+        "resized_image_url": "https://scontent.xx.fbcdn.net/ad-image-1-resized.jpg",
+        "watermarked_resized_image_url": ""
+      }
+    ],
     "videos": []
   },
   "spend": null,

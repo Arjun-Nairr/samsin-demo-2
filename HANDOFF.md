@@ -85,88 +85,95 @@ missing ad ID, duplicate ID (keep-first), empty results, and provider-error
 handling that never leaks the API key (checked directly against source, no
 live call needed for that assertion).
 
-## Live-fetch status: BLOCKED — no credentials available
+## Live-fetch status: DONE — verified against the real API
 
-No `SCRAPECREATORS_API_KEY` was available in this session. **No live
-fetch has been attempted or claimed.** All verification above is
-fixture-based, built directly from the current official ScrapeCreators
-docs (`/v1/facebook/adlibrary/company/ads/` and
-`/v1/facebook/adlibrary/search/companies/`), fetched during this session —
-not guessed.
+`SCRAPECREATORS_API_KEY` was added to `.env` and a real fetch was run:
+`cd src && python -m ad_fetcher.main` → exit 0, 30 raw results, 1 credit
+charged, 98 credits remaining on the key's account at that point.
 
-**Advertiser identity is therefore also unverified.** Config uses
-`companyName: "Aelfric Eden"` (exact spelling from the brief). Before
-trusting a real run: call the company-search endpoint once
-(`GET /v1/facebook/adLibrary/search/companies?query=Aelfric Eden`), confirm
-the returned `name`/`page_alias`/`ig_username` genuinely matches the
-official Aelfric Eden storefront (not a lookalike/fan page), and — only if
-worth the extra request — swap the verified `pageId` into
-`config.COMPETITOR` in place of `companyName`. This is a one-time
-resolution, not a per-run cost.
+**Real-schema bug found and fixed**: the documented example shows
+`images: [{ "url": "..." }]`, but every real `IMAGE`-format ad instead
+returned `original_image_url` / `resized_image_url` (no `url` key at all).
+This silently rejected all 8 real image ads (0 image ads passed) before
+the fix. Fixed in `normalizer.py` to check `url` → `original_image_url` →
+`resized_image_url`, preferring the original over the resized copy. The
+`image_ad.json` fixture was updated to match the real shape so this can't
+regress silently. All 13 tests still pass after the fix.
 
-**Exact next step for whoever has a key**: add it to `.env`, run
-`cd src && python -m ad_fetcher.main`, confirm real output matches the
-contract shape, and paste a sanitized sample (strip nothing but the key —
-ad content is already public) into this file's "Sanitized example output"
-section below.
+Also observed live: a `display_format` value of `"DPA"` (Dynamic Product
+Ads) not in the documented enum. Correctly rejected as unsupported — the
+spec restricts Sequence A to `image`/`video` only, and DPA is a distinct
+dynamic-catalog ad format, not a mislabeled image/video.
+
+Real run after the fix: 30 raw results → 8 IMAGE, 12 VIDEO, 10 DPA
+(rejected as unsupported) → 20 normalized ads (correctly capped at the
+`BATCH_SIZE` limit), 0 duplicates or malformed records encountered.
+
+**Advertiser identity was not independently re-verified via company-search**
+this session (no separate call was made — `companyName: "Aelfric Eden"` was
+used directly, as documented in README). The real page name returned in
+the fetched results was `"Aelfric Eden"` for every ad, consistent with the
+brief, but this is not the same as cross-checking `page_id`/URL against the
+company-search endpoint. Recommended before this feeds anything
+higher-stakes: one `GET /v1/facebook/adLibrary/search/companies?query=Aelfric
+Eden` call, confirm the official storefront, optionally pin the verified
+`pageId` into `config.COMPETITOR`.
 
 ## Sanitized example output
 
-Fixture-derived (not live) — shape matches what a real run will produce:
+Real live-fetch output (media URLs are Meta CDN links with long signed
+tokens — truncated below with `...` for readability only; nothing else
+altered):
 
 ```json
 {
-  "count": 3,
+  "count": 20,
   "ads": [
     {
-      "ad_id": "111111111111111",
+      "ad_id": "2176804236421543",
       "brand": "Aelfric Eden",
-      "body": "New drop: oversized graphic tees.",
+      "body": "Ready to switch up your streetwear game? Extra 15% OFF with Code: AE15 #AelfricEden #NewIn #StreetStyle #DoubleWaist #FashionDeals",
       "headline": "",
-      "cta": "Shop Now",
-      "media_type": "image",
-      "media_url": "https://scontent.xx.fbcdn.net/ad-image-1.jpg",
-      "started_at": "2025-06-15T15:06:40+00:00",
-      "is_active": true,
-      "snapshot_url": "https://www.facebook.com/ads/library/?id=111111111111111"
-    },
-    {
-      "ad_id": "444444444444444",
-      "brand": "Aelfric Eden",
-      "body": "Behind the scenes of our summer collection.",
-      "headline": "",
-      "cta": "Learn More",
+      "cta": "Shop now",
       "media_type": "video",
-      "media_url": "https://video.xx.fbcdn.net/ad-video-hd.mp4",
-      "started_at": "2025-06-27T04:53:20+00:00",
+      "media_url": "https://video-lga3-3.xx.fbcdn.net/o1/v/t2/f2/m366/AQP3mVuAcSM0...mp4?...",
+      "started_at": "2026-03-18T07:00:00+00:00",
       "is_active": true,
-      "snapshot_url": "https://www.facebook.com/ads/library/?id=444444444444444"
+      "snapshot_url": "https://www.facebook.com/ads/library/?id=2176804236421543"
     },
     {
-      "ad_id": "666666666666666",
+      "ad_id": "891219893505716",
       "brand": "Aelfric Eden",
-      "body": "Card 1: cropped hoodie, 4 colorways.",
-      "headline": "Cropped Hoodie",
-      "cta": "Shop Now",
-      "media_type": "image",
-      "media_url": "https://scontent.xx.fbcdn.net/card-1.jpg",
-      "started_at": "2025-07-08T18:40:00+00:00",
-      "is_active": false,
-      "snapshot_url": "https://www.facebook.com/ads/library/?id=666666666666666"
+      "body": "Final Sale! Limited stock! Shop Now & Own the New School Year! #tee #tracksuit #sweatpants #hoodie #jacket #jeans #outfitinspo #streetwear #fashion #aelfriceden",
+      "headline": "Aelfric Eden Big Sale",
+      "cta": "Shop now",
+      "media_type": "video",
+      "media_url": "https://video-lga3-3.xx.fbcdn.net/o1/v/t2/f2/m366/AQPOiUPmNcsx...mp4?...",
+      "started_at": "2026-07-16T07:00:00+00:00",
+      "is_active": true,
+      "snapshot_url": "https://www.facebook.com/ads/library/?id=891219893505716"
     }
   ]
 }
 ```
 
+(18 more ads omitted here — see the live run output captured in this
+session's transcript for the full 20. Every `ad_id` was unique, every
+`brand` was `"Aelfric Eden"`, `is_active` was `true` on all 20, and
+`started_at` ranged from January to August 2026.)
+
 ## Known limitations
 
 - Media URLs are third-party CDN URLs (`scontent`/`video.xx.fbcdn.net`) and
-  are not durable — they can expire. Not downloaded or persisted by design
-  (Sequence A has no storage).
-- `headline` will be `""` for the overwhelming majority of real ads (no
-  documented headline field outside carousel cards).
-- Company-search identity verification is unperformed (see Blocked above).
-- Credit usage for a real run cannot be reported yet (no live call made).
+  are not durable — they carry signed, time-limited tokens and will expire.
+  Not downloaded or persisted by design (Sequence A has no storage).
+- `headline` is `""` on most real ads (16/20 in the live run) — confirmed
+  live, not just a guess from the docs. Only some campaigns set a headline.
+- Company-search identity verification (`page_id`/URL cross-check) was not
+  performed this session — `companyName` matching was relied on instead.
+- Carousel/DCO `cards[]` extraction (including the real image-field name
+  fix) has never been exercised against a real ad with non-empty `cards` —
+  all 30 live results had `cards: []`. Still fixture-only for that path.
 
 ## Working tree
 
@@ -192,14 +199,18 @@ milestone either — that stays a separate, later, user-approved decision.
 
 **Verified working**: normalizer cleanup rules (all 10 required cases),
 output contract shape, CLI stdout/stderr/exit-code contract, missing-key
-error path, `.env` git-ignore.
+error path, `.env` git-ignore, **and now a real live fetch** (20 normalized
+ads from 30 raw results, 1 credit charged) — including catching and fixing
+a real schema mismatch between the docs and the live API (image URL field
+name).
 
-**Verified only with fixtures**: all field-extraction logic (image/video/
-carousel paths), dedup, ordering, limit — fixtures built from the current
-official docs, not guessed, but not run against a real response.
+**Verified only with fixtures**: carousel/DCO `cards[]` extraction path —
+no real ad in the live batch had non-empty `cards`, so that logic is
+untested against real data.
 
-**Blocked pending credentials**: any live ScrapeCreators call, advertiser
-identity verification via company-search, real credit-cost report.
+**Blocked / not done**: company-search advertiser identity verification
+(companyName was used directly and matched on every live result, but
+`page_id`/URL was never independently cross-checked).
 
 **Intentionally deferred** (per spec, documentation only — not built):
 organic post/reel enrichment, matching/confidence scoring, ranking/
