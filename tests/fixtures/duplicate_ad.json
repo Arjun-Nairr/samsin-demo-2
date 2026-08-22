@@ -1,0 +1,16 @@
+{
+  "ad_archive_id": "111111111111111",
+  "is_active": false,
+  "start_date": 1749000000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "This is a later duplicate of ad 111111111111111 and must be dropped." },
+    "display_format": "IMAGE",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [{ "url": "https://scontent.xx.fbcdn.net/ad-image-1-duplicate.jpg" }],
+    "videos": []
+  }
+}

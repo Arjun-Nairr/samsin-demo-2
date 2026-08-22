@@ -1,0 +1,39 @@
+{
+  "ad_archive_id": "666666666666666",
+  "ad_id": null,
+  "is_active": false,
+  "start_date": 1752000000,
+  "end_date": 1753000000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "collation_id": "777777777777777",
+  "collation_count": 3,
+  "publisher_platform": ["FACEBOOK"],
+  "title": null,
+  "snapshot": {
+    "body": { "text": "Fallback body text for the whole carousel." },
+    "display_format": "IMAGE",
+    "cta_text": "Fallback CTA",
+    "cta_type": "SHOP_NOW",
+    "cards": [
+      {
+        "body": "Card 1: cropped hoodie, 4 colorways.",
+        "title": "Cropped Hoodie",
+        "cta_text": "Shop Now",
+        "images": [{ "url": "https://scontent.xx.fbcdn.net/card-1.jpg" }],
+        "videos": []
+      },
+      {
+        "body": "Card 2: cargo pants restock.",
+        "title": "Cargo Pants",
+        "cta_text": "Shop Now",
+        "images": [{ "url": "https://scontent.xx.fbcdn.net/card-2.jpg" }],
+        "videos": []
+      }
+    ],
+    "images": [],
+    "videos": []
+  },
+  "spend": null,
+  "impressions_with_index": { "impressions_text": null, "impressions_index": 0 }
+}

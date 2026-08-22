@@ -1,0 +1,16 @@
+{
+  "ad_archive_id": null,
+  "is_active": true,
+  "start_date": 1750700000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "Ad with no archive ID for some reason." },
+    "display_format": "IMAGE",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [{ "url": "https://scontent.xx.fbcdn.net/ad-image-no-id.jpg" }],
+    "videos": []
+  }
+}

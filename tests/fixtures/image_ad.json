@@ -1,0 +1,26 @@
+{
+  "ad_archive_id": "111111111111111",
+  "ad_id": null,
+  "is_active": true,
+  "start_date": 1750000000,
+  "end_date": null,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "collation_id": "333333333333333",
+  "collation_count": 1,
+  "publisher_platform": ["FACEBOOK", "INSTAGRAM"],
+  "title": null,
+  "snapshot": {
+    "body": { "text": "  New drop: oversized graphic tees.  " },
+    "display_format": "IMAGE",
+    "cta_text": "Shop Now",
+    "cta_type": "SHOP_NOW",
+    "caption": "aelfriceden.com",
+    "link_url": "https://aelfriceden.com/collections/new",
+    "cards": [],
+    "images": [{ "url": "https://scontent.xx.fbcdn.net/ad-image-1.jpg" }],
+    "videos": []
+  },
+  "spend": null,
+  "impressions_with_index": { "impressions_text": null, "impressions_index": 0 }
+}

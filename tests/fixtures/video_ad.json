@@ -1,0 +1,32 @@
+{
+  "ad_archive_id": "444444444444444",
+  "ad_id": null,
+  "is_active": true,
+  "start_date": 1751000000,
+  "end_date": null,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "collation_id": "555555555555555",
+  "collation_count": 1,
+  "publisher_platform": ["FACEBOOK"],
+  "title": null,
+  "snapshot": {
+    "body": { "text": "Behind the scenes of our summer collection." },
+    "display_format": "VIDEO",
+    "cta_text": "Learn More",
+    "cta_type": "LEARN_MORE",
+    "caption": "aelfriceden.com",
+    "link_url": "https://aelfriceden.com/pages/summer",
+    "cards": [],
+    "images": [],
+    "videos": [
+      {
+        "video_hd_url": "https://video.xx.fbcdn.net/ad-video-hd.mp4",
+        "video_sd_url": "https://video.xx.fbcdn.net/ad-video-sd.mp4",
+        "video_preview_image_url": "https://scontent.xx.fbcdn.net/ad-video-preview.jpg"
+      }
+    ]
+  },
+  "spend": null,
+  "impressions_with_index": { "impressions_text": null, "impressions_index": 0 }
+}

@@ -1,0 +1,16 @@
+{
+  "ad_archive_id": "999999999999999",
+  "is_active": true,
+  "start_date": 1750600000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "Ad with a media format Sequence A does not support." },
+    "display_format": "NONE",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [],
+    "videos": []
+  }
+}
