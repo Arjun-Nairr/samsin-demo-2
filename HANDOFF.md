@@ -11,9 +11,9 @@
   claim has since changed, it is marked **(superseded)** with a pointer to
   the current statement — do not read an unmarked older section as current
   without checking for a later update.
-- Git status as of the start of the cleanup pass documented near the end
-  of this file: **clean**, `HEAD` and `origin/main` both at `b3e44a2`. See
-  "Cleanup pass" at the bottom for what changed since.
+- The cleanup pass below started from a clean tree at `b3e44a2` and ended
+  committed and pushed as `b23d505` — `HEAD` and `origin/main` both at
+  `b23d505` as of this line. See "Cleanup pass" at the bottom for details.
 
 ## Milestone completed (Sequence A)
 
@@ -620,34 +620,23 @@ added, removed, or renamed in either `normalize_ad`'s or `normalize_post`'s
 return dict; only internal URL-selection and timestamp-validation logic
 changed.
 
-## Git status (current, at the end of this cleanup)
+## Git status (current, committed and pushed)
 
-Not committed. Per the brief ("do not commit or push unless explicitly
-instructed"), the changes above are sitting as local modifications/new
-files only:
-
-Actual `git status --porcelain` output at the end of this cleanup:
+The cleanup changes were committed and pushed once the user explicitly
+authorized it, after this file's cleanup-pass content (everything above
+this line) was already written:
 
 ```
- M HANDOFF.md
- M src/ad_fetcher/normalizer.py
- M src/organic_fetcher/normalizer.py
- M src/organic_fetcher/service.py
- M tests/test_normalizer.py
- M tests/test_organic_normalizer.py
-?? tests/fixtures/boolean_start_date.json
-?? tests/fixtures/image_ad_later_candidate.json
-?? tests/fixtures/video_ad_later_candidate.json
-?? tests/fixtures_organic/boolean_timestamp.json
-?? tests/fixtures_organic/video_post_later_candidate.json
+git add -A
+git commit -m "Cleanup/hardening pass: fix candidate-selection and bool-timestamp bugs" → b23d505
+git push                                                                                 → b3e44a2..b23d505  main -> main
 ```
 
-`README.md` is untouched — its documented commands and output contracts
-were checked against the current code and are still accurate, so no edit
-was needed there.
-
-`HEAD` remains `b3e44a2`; `origin/main` is unchanged. `.env` was not read,
-printed, or modified.
+`git status --porcelain` is now empty; `HEAD` and `origin/main` both sit at
+`b23d505`. `README.md` was left untouched — its documented commands and
+output contracts were checked against the current code and are still
+accurate. `.env` was not read, printed, modified, or committed at any
+point (confirmed absent from every `git status`/`git add` output above).
 
 ## Reusable Instagram-publishing sandbox (for a future integration only)
 
