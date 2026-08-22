@@ -175,25 +175,255 @@ session's transcript for the full 20. Every `ad_id` was unique, every
   fix) has never been exercised against a real ad with non-empty `cards` —
   all 30 live results had `cards: []`. Still fixture-only for that path.
 
-## Working tree
+## Working tree (superseded — see Sequence B section below for current state)
 
-Clean except for tracked new files (all staged with `git add -A`, nothing
-committed — no commit was made per "don't push/commit without being asked"
-carried forward from prior project conventions). `.env` confirmed absent
-from `git status --porcelain` output.
+*(Original Sequence A note, kept for history: at the time this was written,
+Sequence A's files were staged with `git add -A` but not yet committed.
+They were committed shortly after, in commit `a0054a7`, then pushed to
+`https://github.com/Arjun-Nairr/samsin-demo-2` along with a follow-up fix
+commit `f5cbaf6`. See "Git status" under Sequence B below for the accurate,
+current state.)*
 
-## Next recommended milestone (not implemented)
-
-Enrichment: fetch public Facebook/Instagram posts and reels for organic
-engagement (`GET /v1/facebook/profile/reels`, `GET /v1/facebook/post`,
-Instagram equivalents), store as `organic_view_count` (never
-`ad_view_count`), keep `ad_started_at` separate from
-`organic_post_published_at`, match ads to posts only via explicit shared
-URL/ID or exact creative match (never text similarity alone), and leave
-unmatched ads `unknown` rather than zero. No ranking/weighting in that
-milestone either — that stays a separate, later, user-approved decision.
+## Next recommended milestone (Sequence B — now implemented, see below)
 
 ---
+
+# Sequence B — Organic Instagram Posts
+
+## Milestone completed
+
+One hardcoded Aelfric Eden Instagram account (`aelfricedenofficial`) →
+ScrapeCreators Instagram Posts API (`GET /v2/instagram/user/posts`) → raw
+public posts/reels → deterministic cleanup → normalized organic-content
+JSON, printed by a separate CLI. Sequence A's package (`ad_fetcher`) was
+not modified — only imported from (`get_api_key`, `ScrapeCreatorsError`).
+
+## Files added
+
+```
+src/organic_fetcher/
+  __init__.py
+  config.py                  ACCOUNT_HANDLE, BRAND_LABEL, PLATFORM;
+                              re-exports ad_fetcher.config.get_api_key
+  scrapecreators_client.py   isolated HTTP call to /v2/instagram/user/posts,
+                              imports API_BASE + ScrapeCreatorsError from
+                              ad_fetcher's client (same exception type,
+                              same retry shape - not merged into one module)
+  normalizer.py               deterministic cleanup, carousel resolution
+  service.py                   wires client + normalizer, rejects a
+                                missing/non-list `items` as a provider error
+  main.py                      CLI: same stdout/stderr/exit-code contract
+tests/
+  test_organic_normalizer.py
+  fixtures_organic/  (video_post, carousel_post, carousel_post_video_first,
+                       image_post, zero_engagement_video, malformed,
+                       missing_id, missing_media, unsupported_media_type,
+                       duplicate_post, empty_response,
+                       malformed_items_response)
+```
+
+Files changed: `README.md` (Sequence B sections added), `HANDOFF.md` (this
+section). **No files in `src/ad_fetcher/` or `tests/fixtures/` were
+touched.**
+
+## Files removed
+
+None.
+
+## Key implementation decisions
+
+- **Reuse, not refactor**: imported `ad_fetcher.config.get_api_key` (it's
+  provider-agnostic — just reads `SCRAPECREATORS_API_KEY`) and
+  `ad_fetcher.scrapecreators_client.ScrapeCreatorsError` (so both CLIs'
+  error handling is the same shape) rather than duplicating them. Did
+  **not** extract a shared HTTP-retry helper between the two clients —
+  that would mean editing Sequence A's file for a second call site, which
+  the brief explicitly said not to do. The ~30-line retry loop is
+  duplicated once, isolated per package.
+- **`post_id` = the API's `id` field, not `pk`.** Live-confirmed: `pk` is
+  `null` on every item under `trim=true`. `id` is the real stable ID.
+- **`permalink` is read directly from the API's `url` field** — present
+  on every real item, including reels (which use `/p/<code>/`, not
+  `/reel/...`). Shortcode construction is fallback-only, per spec.
+- **Carousel resolution** iterates `carousel_media[]` for the first
+  supported item (image or video) with a usable URL — not blindly index 0
+  — and always pulls engagement metrics from the **top-level container**,
+  never the sub-item, because live data confirms sub-items carry media
+  fields but never their own `play_count`/`like_count`/`comment_count`.
+- **`organic_view_count`** prefers `ig_play_count` over `play_count`,
+  falls back to `null` only when both are absent/`None` — a real `0` is
+  never coerced to `null` (verified by a dedicated test).
+- **One request, no pagination, no limit**: the endpoint doesn't take a
+  page-size param and Sequence B doesn't loop on `next_max_id`/`more_available` —
+  whatever one page returns (12 items on every call made this session) is
+  the whole batch, per spec.
+- **Two hardcoded Aelfric Eden identifiers now exist independently**:
+  Sequence A's `companyName` (Meta ad library) and Sequence B's Instagram
+  `handle`. Neither was cross-verified against the other (e.g. confirming
+  the Instagram account is the one actually linked to the ad library page)
+  — flagging this as unverified, not silently assuming they're the same
+  entity just because both say "Aelfric Eden".
+
+## Commands run
+
+```
+python -m unittest discover -s tests -v          → 28 passed (13 Sequence A + 15 Sequence B)
+cd src && python -m organic_fetcher.main          → exit 0, 12 posts, real live output
+```
+
+(Sequence A's suite was re-run as part of the same `discover` command
+specifically to check for regressions — none found.)
+
+## Test results
+
+15 Sequence B tests, all passing: valid image post, valid video/reel,
+carousel resolving to its first supported item (tested for both an
+image-first and a video-first carousel), a real-zero-engagement post
+(`0` stays `0`, not `null`), malformed record, missing post ID, missing
+media, unsupported media type, duplicate post ID (keep-first), empty
+results, missing-key error (no request made), error messages never
+containing the key (checked directly against source), and a non-list
+`items` response correctly raising a provider error distinct from a
+genuinely empty result.
+
+All 13 Sequence A tests still pass, unmodified, in the same run — no
+regression.
+
+## Live-fetch status: DONE — verified against the real API
+
+Ran `cd src && python -m organic_fetcher.main` with the existing
+`SCRAPECREATORS_API_KEY` from `.env`. Exit 0, valid JSON to stdout only.
+
+**Real-schema discoveries** (this is why the "make one live request first"
+step in the brief mattered):
+
+1. `pk` is `null` on every item under `trim=true` — `id` is the real
+   stable ID. Not documented explicitly; found by inspection.
+2. The API returns a ready-made permalink at `url` for every item,
+   including reels, in the `/p/<code>/` form — not `/reel/<code>/` as
+   might be assumed. Used directly; shortcode construction is dead code on
+   real data (still kept as the documented fallback).
+3. `carousel_media[]` sub-items have their own `media_type` and creative
+   fields but **no** `play_count`/`ig_play_count`/`like_count`/`comment_count` —
+   confirmed by inspecting an actual carousel response, not assumed.
+   Engagement is read from the container item unconditionally.
+4. Video items also carry `image_versions2` (the poster/cover frame) —
+   used as `thumbnail_url`.
+
+**Live run stats** (one CLI invocation, `python -m organic_fetcher.main`):
+
+- Raw item count: 12
+- Normalized count: 12 (0 rejected this run — every raw item had usable
+  media; earlier schema-inspection calls during development did surface
+  carousels whose selected item lacked view counts, which is expected and
+  correctly `null`, not a rejection)
+- By post type: 7 video, 5 image (5 of the 6 raw `carousel_container`
+  items resolved to an image first-item; 1 resolved to a video first-item)
+- Video posts with a view count: 6 of 7 (the one video without a view
+  count is the carousel-resolved video — carousels never carry
+  `play_count`, confirmed per point 3 above)
+- Missing likes: 0 of 12. Missing comments: 0 of 12. Missing views: 6 of
+  12 (all accounted for: 5 image posts + 1 carousel-resolved video, all
+  correctly `null` per the schema, not a bug)
+
+**Credits used this session (Sequence B total, across dev + verification)**:
+3 requests, 3 credits charged — one initial schema-inspection probe (done
+deliberately before writing any code, per the brief), one CLI run for the
+stats above, one additional raw-response check to confirm the exact
+`credits_charged`/`credits_remaining` values. The shipped CLI itself makes
+exactly **one** request per invocation, as required — the extra 2 were
+this session's own verification overhead, not something the delivered code
+does repeatedly.
+
+## Sanitized example output
+
+Real live output (one real image post, one real reel; media URLs
+truncated — signed tokens only, nothing else altered):
+
+```json
+[
+  {
+    "platform": "instagram",
+    "post_id": "3956409305604079263_11087474383",
+    "shortcode": "Dbn_U0ulL6f",
+    "brand": "Aelfric Eden",
+    "account_handle": "aelfricedenofficial",
+    "post_type": "image",
+    "caption": "Pick your back-to-school character. Which look is your vibe this semester? Anniversary Sale is live. Up to 40% Off selected styles. More surprises await online. #aelfriceden",
+    "published_at": "2026-08-04T16:26:04+00:00",
+    "permalink": "https://www.instagram.com/p/Dbn_U0ulL6f/",
+    "media_url": "https://scontent-dfw5-2.cdninstagram.com/v/t51.82787-15/7646...",
+    "thumbnail_url": null,
+    "organic_view_count": null,
+    "organic_like_count": 648,
+    "organic_comment_count": 19
+  },
+  {
+    "platform": "instagram",
+    "post_id": "3954222268720362185_11087474383",
+    "shortcode": "DbgODP6BDLJ",
+    "brand": "Aelfric Eden",
+    "account_handle": "aelfricedenofficial",
+    "post_type": "video",
+    "caption": "The first day fit starts here. Back to School Sale is now live. Up to 40% Off selected styles. #aelfriceden",
+    "published_at": "2026-08-01T16:00:08+00:00",
+    "permalink": "https://www.instagram.com/p/DbgODP6BDLJ/",
+    "media_url": "https://scontent-dfw5-1.cdninstagram.com/o1/v/t2/f2/m86/AQMj...",
+    "thumbnail_url": "https://scontent-dfw6-1.cdninstagram.com/v/t51.82787-15/7761...",
+    "organic_view_count": 123485,
+    "organic_like_count": 3,
+    "organic_comment_count": 13
+  }
+]
+```
+
+## Known limitations (Sequence B)
+
+- No plain (non-carousel) image post appeared in any live batch this
+  session — all top-level `image`-typed records in the real run came from
+  carousel resolution. The plain-image-post code path is covered by a
+  realistic synthetic fixture (`image_post.json`), not real data.
+- Instagram CDN media URLs are signed and will expire — not
+  downloaded/persisted, same posture as Sequence A.
+- The Instagram handle and the Facebook ad-library `companyName` were
+  each hardcoded independently and never cross-verified as the same real
+  business (see design decisions above).
+- `play_count`/`like_count`/`comment_count` accuracy is whatever
+  Instagram's API reports — ScrapeCreators' own docs note play counts "can
+  sometimes be inaccurate." Not something this code can correct for.
+
+## Git status (current, accurate)
+
+```
+$ git status
+On branch main
+Your branch is up to date with 'origin/main'.
+nothing to commit, working tree clean   (as of the start of this session,
+                                          before Sequence B's new files)
+```
+
+After adding Sequence B's files, the tree has these untracked/modified
+paths, **none of which have been committed or pushed**:
+
+```
+new:      src/organic_fetcher/{__init__,config,scrapecreators_client,normalizer,service,main}.py
+new:      tests/test_organic_normalizer.py
+new:      tests/fixtures_organic/*.json  (12 files)
+modified: README.md
+modified: HANDOFF.md
+```
+
+Per the brief: **not committing, pushing, or deploying this** unless
+explicitly told to.
+
+## What remains for Sequence C (documentation only — not implemented)
+
+Deterministic audit of whether advertisements can be matched to organic
+posts using stable IDs, explicit URLs, or exact creative evidence.
+
+---
+
+
 
 ## Report
 
@@ -215,3 +445,24 @@ untested against real data.
 **Intentionally deferred** (per spec, documentation only — not built):
 organic post/reel enrichment, matching/confidence scoring, ranking/
 weighting, OpenClaw integration, cron/scheduling, multi-competitor support.
+
+### Sequence B additions to this report
+
+**Verified working**: all 15 normalizer/service tests, output contract
+shape, CLI stdout/stderr/exit-code contract, missing-key error path, real
+zero-vs-null distinction, non-list-`items` provider-error handling, **and a
+real live fetch** (12/12 raw items normalized, 3 credits charged across
+this session's dev+verification calls) — including three real-schema
+discoveries not evident from the docs (`pk` always null, ready-made
+permalinks, carousel sub-items never carrying their own engagement).
+
+**Verified only with fixtures**: the plain (non-carousel) image-post code
+path — no real post of that exact shape appeared in any live batch this
+session, only carousel-resolved images.
+
+**Blocked / not done**: cross-verification that the Instagram handle and
+the Facebook ad-library `companyName` refer to the same real business.
+
+**Intentionally deferred** (per spec, documentation only — not built):
+Sequence C's matching audit, Facebook posts/reels, any ranking/weighting/
+scoring, views-per-day, AI/vision, persistence, multi-competitor support.

@@ -1,0 +1,20 @@
+{
+  "id": "3954222268720362185_11087474383",
+  "code": "DbgODP6BDLJ",
+  "media_type": 2,
+  "taken_at": 1785600008,
+  "caption": { "text": "This is a later duplicate of the same reel and must be dropped." },
+  "play_count": 999999,
+  "ig_play_count": 999999,
+  "comment_count": 999,
+  "like_count": 999,
+  "image_versions2": {
+    "candidates": [
+      { "height": 1920, "width": 1080, "url": "https://scontent.cdninstagram.com/v/thumb-video-1-dup.jpg?sig=abc..." }
+    ]
+  },
+  "video_versions": [
+    { "bandwidth": 1000, "height": 1280, "width": 720, "type": 101, "url": "https://scontent.cdninstagram.com/o1/v/t2/reel-1-dup.mp4?sig=abc..." }
+  ],
+  "url": "https://www.instagram.com/p/DbgODP6BDLJ/"
+}

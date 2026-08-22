@@ -1,9 +1,15 @@
-# Samsin Ad Intelligence — Sequence A
+# Samsin Ad Intelligence
 
-Fetches recent Meta (Facebook/Instagram) ad-library ads for one hardcoded
-competitor via the ScrapeCreators API, and normalizes them into a small
-JSON contract. This is Sequence A only: one competitor, one provider call,
-no database, no scheduling, no scoring.
+Two independent, small CLIs against the ScrapeCreators API:
+
+- **Sequence A** (`ad_fetcher`): paid Meta/Facebook ad-library ads for one
+  hardcoded competitor (Aelfric Eden).
+- **Sequence B** (`organic_fetcher`): public organic Instagram posts/reels
+  for one hardcoded account (`aelfricedenofficial`).
+
+Both: one provider call, no pagination, no database, no scheduling, no
+scoring. They do not talk to each other — see `HANDOFF.md` for why (organic
+vs. paid metrics must stay separate) and what Sequence C would add.
 
 ## Setup
 
@@ -22,13 +28,19 @@ no database, no scheduling, no scoring.
 The one competitor (`Aelfric Eden`) is configured in one place:
 [`src/ad_fetcher/config.py`](src/ad_fetcher/config.py) — the `COMPETITOR` dict.
 
+The one Instagram account for Sequence B (`aelfricedenofficial`) is
+configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py).
+
 ## Run tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Run the fetcher
+Runs both Sequence A's and Sequence B's tests together (28 total) — a
+regression in one shows up when you run the other.
+
+## Run Sequence A (paid ads)
 
 ```bash
 cd src
@@ -60,6 +72,77 @@ error text never includes the API key.
   ]
 }
 ```
+
+## Run Sequence B (organic Instagram posts)
+
+```bash
+cd src
+python -m organic_fetcher.main
+```
+
+Same contract: stdout=JSON only on success, stderr+non-zero exit on
+failure, API key never printed.
+
+### Expected output shape
+
+```json
+{
+  "count": 12,
+  "organic_posts": [
+    {
+      "platform": "instagram",
+      "post_id": "3954222268720362185_11087474383",
+      "shortcode": "DbgODP6BDLJ",
+      "brand": "Aelfric Eden",
+      "account_handle": "aelfricedenofficial",
+      "post_type": "video",
+      "caption": "The first day fit starts here. Back to School Sale is now live.",
+      "published_at": "2026-08-01T16:00:08+00:00",
+      "permalink": "https://www.instagram.com/p/DbgODP6BDLJ/",
+      "media_url": "https://scontent-atl3-1.cdninstagram.com/o1/v/t2/...",
+      "thumbnail_url": "https://scontent-atl3-3.cdninstagram.com/v/...",
+      "organic_view_count": 123483,
+      "organic_like_count": 3,
+      "organic_comment_count": 13
+    }
+  ]
+}
+```
+
+### Sequence B design notes
+
+- **`post_id` is the API's `id` field, not `pk`.** Confirmed live: `pk` is
+  always `null` under `trim=true`. `id` (e.g.
+  `"3954222268720362185_11087474383"`) is the real stable, unique ID.
+- **`permalink` comes straight from the API's `url` field** (present on
+  every observed item, including reels — which use `/p/<code>/`, not
+  `/reel/<code>/`). Shortcode-construction (`/p/<code>/`) is fallback-only,
+  for the rare case `url` is missing. Not downloaded/persisted (Sequence B
+  has no storage, same as Sequence A).
+- **`post_type` is always `image` or `video`**, never `"carousel"` —
+  carousels are resolved to whichever supported item is picked (see below),
+  matching Sequence A's two-value `media_type` contract.
+- **`organic_view_count` prefers the documented
+  Instagram-specific `ig_play_count`** when present, else the generic
+  `play_count`, else `null`. A real `0` is preserved, never turned into
+  `null`.
+- **Carousel selection**: iterates `carousel_media[]` in order and uses the
+  **first item with a supported type and a usable media URL** (not
+  necessarily index 0) — image or video. Confirmed live: carousel sub-items
+  carry their own `media_type`/`video_versions`/`image_versions2`, but
+  **never** their own `play_count`/`like_count`/`comment_count` — those
+  only exist on the container. So media is taken from the selected
+  sub-item, but engagement metrics always come from the top-level item.
+- **`thumbnail_url`** is the video's poster-frame image
+  (`image_versions2`) — populated for video posts (including a
+  video-first carousel), left `null` for image posts since it would just
+  duplicate `media_url`.
+- Signed Instagram CDN media URLs (`cdninstagram.com`) expire, same caveat
+  as Sequence A's Facebook CDN URLs, unrelated to Meta ad performance.
+- **Organic metrics are never conflated with ad metrics.** `organic_view_count`
+  is never renamed `ad_view_count`, and Sequence B never touches Sequence
+  A's output — matching them is explicitly Sequence C's (undocumented,
+  unimplemented) job.
 
 ## Design notes
 
