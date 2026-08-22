@@ -1,0 +1,16 @@
+{
+  "ad_archive_id": "222222222222224",
+  "is_active": true,
+  "start_date": false,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "start_date is a boolean, not a real timestamp." },
+    "display_format": "IMAGE",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [{ "original_image_url": "https://scontent.xx.fbcdn.net/ad-image-bool-ts.jpg" }],
+    "videos": []
+  }
+}

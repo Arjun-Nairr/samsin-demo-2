@@ -41,8 +41,9 @@ def _first_http_url(*candidates):
 
 def _image_url(image_versions2) -> str | None:
     candidates = (image_versions2 or {}).get("candidates") or []
-    first = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
-    return _first_http_url(first.get("url"))
+    # Scan every candidate, not just the first - a malformed/URL-less first
+    # entry shouldn't hide a valid one further down the (provider-ordered) list.
+    return _first_http_url(*(c.get("url") for c in candidates if isinstance(c, dict)))
 
 
 def _resolve_single_media(node: dict) -> dict | None:
@@ -53,8 +54,7 @@ def _resolve_single_media(node: dict) -> dict | None:
 
     if kind == "video":
         versions = node.get("video_versions") or []
-        first = versions[0] if versions and isinstance(versions[0], dict) else {}
-        media_url = _first_http_url(first.get("url"))
+        media_url = _first_http_url(*(v.get("url") for v in versions if isinstance(v, dict)))
         if not media_url:
             return None
         return {
@@ -105,7 +105,10 @@ def normalize_post(raw: object, brand: str, handle: str, platform: str) -> dict 
 
     taken_at = raw.get("taken_at")
     published_at = None
-    if isinstance(taken_at, (int, float)):
+    # bool is a subclass of int in Python - isinstance(True, int) is True -
+    # so exclude it explicitly, or `"taken_at": true` would normalize to a
+    # bogus 1970-01-01T00:00:01Z timestamp instead of being rejected.
+    if isinstance(taken_at, (int, float)) and not isinstance(taken_at, bool):
         published_at = datetime.fromtimestamp(taken_at, tz=timezone.utc).isoformat()
 
     permalink = _first_http_url(raw.get("url"))

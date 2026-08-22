@@ -1,0 +1,22 @@
+{
+  "id": "3900000000000010_11087474383",
+  "code": "ClaterCand1",
+  "media_type": 2,
+  "taken_at": 1785900000,
+  "caption": { "text": "First video candidate is malformed, second is valid." },
+  "play_count": 500,
+  "ig_play_count": 500,
+  "comment_count": 2,
+  "like_count": 10,
+  "image_versions2": {
+    "candidates": [
+      { "height": 1920, "width": 1080, "no_url_here": true },
+      { "height": 1920, "width": 1080, "url": "https://scontent.cdninstagram.com/v/thumb-later.jpg?sig=abc..." }
+    ]
+  },
+  "video_versions": [
+    { "bandwidth": 1000, "height": 1280, "width": 720, "type": 101 },
+    { "bandwidth": 1000, "height": 1280, "width": 720, "type": 102, "url": "https://scontent.cdninstagram.com/o1/v/t2/later-candidate.mp4?sig=abc..." }
+  ],
+  "url": "https://www.instagram.com/p/ClaterCand1/"
+}

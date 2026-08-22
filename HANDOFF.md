@@ -1,6 +1,21 @@
-# Handoff — Sequence A
+# Handoff — Sequences A & B
 
-## Milestone completed
+## Current status (read this first)
+
+- **Sequence A** (paid Meta ads, `ad_fetcher`) — **implemented, tested, live-verified.**
+- **Sequence B** (organic Instagram posts, `organic_fetcher`) — **implemented, tested, live-verified.**
+- **Sequence C** (matching ads to organic posts) — **not implemented.** Scope
+  is documented only, at the bottom of this file.
+- Everything below this point is presented in the order it was written,
+  oldest first, so history is preserved. Where an older section's status
+  claim has since changed, it is marked **(superseded)** with a pointer to
+  the current statement — do not read an unmarked older section as current
+  without checking for a later update.
+- Git status as of the start of the cleanup pass documented near the end
+  of this file: **clean**, `HEAD` and `origin/main` both at `b3e44a2`. See
+  "Cleanup pass" at the bottom for what changed since.
+
+## Milestone completed (Sequence A)
 
 Sequence A: one hardcoded competitor (Aelfric Eden) → ScrapeCreators Meta
 Ad Library Company Ads API → deterministic cleanup → normalized JSON list,
@@ -392,7 +407,12 @@ truncated — signed tokens only, nothing else altered):
   Instagram's API reports — ScrapeCreators' own docs note play counts "can
   sometimes be inaccurate." Not something this code can correct for.
 
-## Git status (current, accurate)
+## Git status at the time Sequence B was written (superseded)
+
+*(This section describes a since-resolved intermediate state — Sequence B's
+new files, listed below as untracked, were committed as `b3e44a2` and
+pushed to `origin/main` shortly after this was written. For the actual
+current git status, see "Cleanup pass" at the bottom of this file.)*
 
 ```
 $ git status
@@ -402,8 +422,7 @@ nothing to commit, working tree clean   (as of the start of this session,
                                           before Sequence B's new files)
 ```
 
-After adding Sequence B's files, the tree has these untracked/modified
-paths, **none of which have been committed or pushed**:
+At that point the tree had these untracked/modified paths:
 
 ```
 new:      src/organic_fetcher/{__init__,config,scrapecreators_client,normalizer,service,main}.py
@@ -413,17 +432,18 @@ modified: README.md
 modified: HANDOFF.md
 ```
 
-Per the brief: **not committing, pushing, or deploying this** unless
-explicitly told to.
+They were committed as `b3e44a2` ("Sequence B: organic Instagram posts
+fetcher for aelfricedenofficial") and pushed to
+`https://github.com/Arjun-Nairr/samsin-demo-2` in the same session, once
+the user explicitly authorized it.
 
-## What remains for Sequence C (documentation only — not implemented)
+## What remains for Sequence C
 
-Deterministic audit of whether advertisements can be matched to organic
-posts using stable IDs, explicit URLs, or exact creative evidence.
+See the "What remains for Sequence C" section at the very bottom of this
+file (in "Cleanup pass") for the current, single copy of this scope note —
+kept in one place instead of two copies that could drift apart.
 
 ---
-
-
 
 ## Report
 
@@ -442,9 +462,11 @@ untested against real data.
 (companyName was used directly and matched on every live result, but
 `page_id`/URL was never independently cross-checked).
 
-**Intentionally deferred** (per spec, documentation only — not built):
-organic post/reel enrichment, matching/confidence scoring, ranking/
-weighting, OpenClaw integration, cron/scheduling, multi-competitor support.
+**Intentionally deferred at the time this was written** *(superseded — organic
+enrichment is no longer deferred, it shipped as Sequence B; see the section
+below)*: ~~organic post/reel enrichment~~, matching/confidence scoring,
+ranking/weighting, OpenClaw integration, cron/scheduling, multi-competitor
+support.
 
 ### Sequence B additions to this report
 
@@ -466,3 +488,215 @@ the Facebook ad-library `companyName` refer to the same real business.
 **Intentionally deferred** (per spec, documentation only — not built):
 Sequence C's matching audit, Facebook posts/reels, any ranking/weighting/
 scoring, views-per-day, AI/vision, persistence, multi-competitor support.
+
+---
+
+# Cleanup pass (hardening, no new sequence)
+
+Scope: documentation corrections, two normalization edge-case bugs, stronger
+provider-error tests, and a note on an existing reusable Instagram-publishing
+sandbox for a future integration. **Sequence C was not started.**
+
+## Starting state
+
+`git status` before any edit: clean, `HEAD` and `origin/main` both at
+`b3e44a2` (the Sequence B commit). Confirmed with `git rev-parse HEAD` and
+`git rev-parse origin/main` — both printed the same hash.
+
+## Documentation fixes
+
+- Title changed from "Handoff — Sequence A" to "Handoff — Sequences A & B"
+  to reflect that both are now implemented.
+- Added a "Current status" section at the top so a future agent doesn't
+  have to read the whole file's history to know what's actually current.
+- The Sequence A report's "Intentionally deferred" line used to list
+  "organic post/reel enrichment" as deferred — contradicted by Sequence B
+  existing. Struck through and marked superseded, pointing at the Sequence
+  B section instead of just deleting the historical statement.
+- The Sequence B "Git status (current, accurate)" section was itself stale
+  the moment Sequence B got committed and pushed — retitled "at the time
+  Sequence B was written (superseded)" and pointed at this section.
+- No fresh GitHub remote re-verification was performed as part of this
+  cleanup beyond the `git rev-parse origin/main` check above (that's a
+  local check of the tracking ref, not a live fetch from GitHub) — not
+  claiming more than that.
+
+## Bugs fixed
+
+1. **First-candidate-only media selection (both sequences).** Both
+   normalizers picked `candidates[0]` / `versions[0]` unconditionally, so a
+   malformed or URL-less first entry caused the whole record to be
+   rejected even when a later candidate had a perfectly good URL. Real
+   ScrapeCreators responses return multiple candidates at different
+   resolutions/qualities — provider order is not a validity guarantee.
+   Fixed in `organic_fetcher/normalizer.py` (`_image_url`, video branch of
+   `_resolve_single_media`) and `ad_fetcher/normalizer.py`
+   (`_resolve_creative`'s image and video branches) to scan every
+   candidate in provider order and take the first one that's actually a
+   valid `http(s)://` URL. The deterministic **carousel/card primary-item**
+   rule (which item is selected) is untouched — this only changes how a
+   URL is picked *within* an already-selected item.
+2. **Boolean timestamps silently accepted (both sequences).** `bool` is a
+   subclass of `int` in Python, so `isinstance(True, int)` is `True`. Both
+   normalizers used `isinstance(x, (int, float))` to gate timestamp
+   conversion, so `"taken_at": true` or `"start_date": false` would have
+   silently produced a bogus `1970-01-01T00:00:0(0|1)Z` instead of being
+   treated as invalid. Fixed in both `normalize_post` (`taken_at`) and
+   `normalize_ad` (`start_date`) by adding `and not isinstance(x, bool)`.
+   The record itself is not rejected — only the date field becomes `null`,
+   consistent with "missing values stay `null`, never invented."
+3. **`organic_fetcher.service` didn't validate the top-level response
+   shape.** It called `raw.get("items")` directly; if the provider (or a
+   bug) ever returned a bare list/string/`null` instead of a JSON object,
+   this would raise an unhandled `AttributeError` rather than a clean
+   `ScrapeCreatorsError`. Fixed by checking `isinstance(raw, dict)` first
+   and raising `ScrapeCreatorsError("...was not a JSON object.")` — kept
+   distinct from the existing missing/non-list `items` check, which stays
+   for the case where the top level *is* a dict but `items` itself is
+   wrong shape (still distinct from a genuinely empty `items: []`).
+
+## Files changed
+
+```
+src/ad_fetcher/normalizer.py         candidate-scan fix, bool-timestamp fix
+src/organic_fetcher/normalizer.py    candidate-scan fix, bool-timestamp fix
+src/organic_fetcher/service.py       top-level dict validation
+tests/test_normalizer.py             +9 tests (candidate fallback x2, bool
+                                      timestamp, 5 mocked provider-error tests)
+tests/test_organic_normalizer.py     +9 tests (candidate fallback, bool
+                                      timestamp, 4 top-level-shape tests,
+                                      4 mocked provider-error tests, +1
+                                      helper for patching the service layer)
+tests/fixtures/video_ad_later_candidate.json        new
+tests/fixtures/image_ad_later_candidate.json        new
+tests/fixtures/boolean_start_date.json              new
+tests/fixtures_organic/video_post_later_candidate.json  new
+tests/fixtures_organic/boolean_timestamp.json           new
+HANDOFF.md                           this section + corrections above
+```
+
+`README.md` was reviewed and left unchanged - its documented output
+contracts and run commands were checked against the current code and are
+still accurate.
+
+No files removed. No files in `ad_fetcher`/`organic_fetcher` were renamed;
+no architecture, matching, scoring, database, OpenClaw, scheduling,
+Facebook-organic-fetching, or Instagram-publishing code was added, per
+scope.
+
+## Provider-error test strengthening
+
+Per the brief, the existing source-code-scanning "does the string `api_key`
+appear near a `raise`" tests were **kept, not deleted** (they're cheap and
+still catch an obvious mistake), and **supplemented** with behavioral tests
+that mock `urllib.request.urlopen` (and `time.sleep`, to keep the retry
+loop's tests instant) and assert on the actual raised `ScrapeCreatorsError`
+message for: HTTP 401 (auth failure), HTTP 500 (generic non-2xx),
+`TimeoutError`, `urllib.error.URLError` (network failure), and malformed
+JSON in the response body — five behavioral tests per sequence, all
+asserting a fake secret key string never appears in the exception text.
+`organic_fetcher`'s service-layer tests additionally cover a bare
+list/string/`null` top-level response (new) and the existing non-list
+`items` case, using a small in-file context-manager helper that swaps
+`organic_fetcher.service.fetch_instagram_posts` for a stub — no mocking
+library beyond stdlib `unittest.mock`, no new test framework.
+
+## Tests run
+
+```
+python -m unittest discover -s tests -v
+```
+
+**Result: 45 passed, 0 failed** (13 original Sequence A + 6 new Sequence A
++ 15 original Sequence B + 11 new Sequence B). Ran in 0.031s — confirms no
+live network calls were made (a real HTTP round-trip would be visibly
+slower, and none of these tests touch the real network or `.env` key at
+all; the mocked tests use a fake in-test key string, never the real one).
+
+No live ScrapeCreators requests were made anywhere in this cleanup pass —
+zero credits spent. Both CLIs' output contracts (`ad_fetcher.main` /
+`organic_fetcher.main`) were verified unchanged by inspection: no field was
+added, removed, or renamed in either `normalize_ad`'s or `normalize_post`'s
+return dict; only internal URL-selection and timestamp-validation logic
+changed.
+
+## Git status (current, at the end of this cleanup)
+
+Not committed. Per the brief ("do not commit or push unless explicitly
+instructed"), the changes above are sitting as local modifications/new
+files only:
+
+Actual `git status --porcelain` output at the end of this cleanup:
+
+```
+ M HANDOFF.md
+ M src/ad_fetcher/normalizer.py
+ M src/organic_fetcher/normalizer.py
+ M src/organic_fetcher/service.py
+ M tests/test_normalizer.py
+ M tests/test_organic_normalizer.py
+?? tests/fixtures/boolean_start_date.json
+?? tests/fixtures/image_ad_later_candidate.json
+?? tests/fixtures/video_ad_later_candidate.json
+?? tests/fixtures_organic/boolean_timestamp.json
+?? tests/fixtures_organic/video_post_later_candidate.json
+```
+
+`README.md` is untouched — its documented commands and output contracts
+were checked against the current code and are still accurate, so no edit
+was needed there.
+
+`HEAD` remains `b3e44a2`; `origin/main` is unchanged. `.env` was not read,
+printed, or modified.
+
+## Reusable Instagram-publishing sandbox (for a future integration only)
+
+A separate, unrelated project — `C:\Users\dwish\Downloads\samsin-pricing-demo`
+(Samsin's own pricing/flyer/Instagram-posting pipeline, not part of this
+repo) — already contains a **live-tested** Instagram publishing path.
+Documented here for later reuse; **nothing was run, uploaded, published, or
+copied into this repo during this cleanup.**
+
+Confirmed by reading (not running) the following files in that project:
+
+- [`instagram/post_to_instagram.py`](../samsin-pricing-demo/instagram/post_to_instagram.py) —
+  two-step Graph API publish: `POST /{ig_user_id}/media` (creates a
+  container from a public `image_url` + caption) then
+  `POST /{ig_user_id}/media_publish` (publishes it), with a small bounded
+  retry around container creation for observed host-side flakiness.
+  Hardcoded Graph API base: `https://graph.instagram.com/v21.0`.
+- [`hosting/upload_image.py`](../samsin-pricing-demo/hosting/upload_image.py) —
+  uploads a local image to imgbb (`api.imgbb.com/1/upload`) to get the
+  public `image_url` Instagram's Graph API requires (it fetches the image
+  itself; there's no binary-upload path for feed posts). 1-day expiry —
+  intentional, since Meta re-hosts its own copy at publish time and the
+  imgbb copy only needs to survive the few seconds between the two calls.
+- `config/settings.py` and `PROJECT_STATUS.md` — confirm credentials are
+  referenced (not hardcoded) via environment variables `IG_USER_ID`,
+  `IG_LONG_LIVED_TOKEN` (or `IG_SHORT_LIVED_TOKEN`), and `IMGBB_API_KEY`,
+  and that `PROJECT_STATUS.md` records multiple real, successful posts
+  already made to a burner account, `test.account4289`.
+
+**Facts worth carrying into a future integration:**
+
+- Instagram's standard image-publishing flow *requires* a publicly
+  reachable `image_url` — it does not accept a local file or binary
+  upload for this endpoint.
+- The existing imgbb handoff in that sandbox already satisfies that
+  requirement and is proven working (real posts went live with it).
+- **Reuse that sandbox rather than rebuilding it** when a future milestone
+  needs to publish anything — the two-step container/publish flow, the
+  retry-on-flakiness behavior, and the imgbb handoff are already
+  correct and live-tested.
+- Its Graph API version is hardcoded to `v21.0`, and it uses an existing
+  long/short-lived token — **both must be revalidated** (version still
+  current, token not expired/revoked) before that integration begins;
+  neither was checked as part of this cleanup.
+- No credentials were copied, and the old project's `.env` was not opened,
+  read, or printed at any point.
+
+## What remains for Sequence C (documentation only — not implemented)
+
+Deterministic audit of whether advertisements can be matched to organic
+posts using stable IDs, explicit URLs, or exact creative evidence. Not
+started, not scoped further than that one sentence, per the brief.

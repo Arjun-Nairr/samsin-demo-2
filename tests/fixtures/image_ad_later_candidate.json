@@ -1,0 +1,19 @@
+{
+  "ad_archive_id": "222222222222223",
+  "is_active": true,
+  "start_date": 1751200000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "First image candidate is malformed, second is valid." },
+    "display_format": "IMAGE",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [
+      { "original_image_url": "not-a-url", "resized_image_url": "" },
+      { "original_image_url": "https://scontent.xx.fbcdn.net/ad-image-later-candidate.jpg" }
+    ],
+    "videos": []
+  }
+}

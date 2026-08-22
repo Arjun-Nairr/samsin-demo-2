@@ -47,17 +47,27 @@ def _resolve_creative(snapshot: dict) -> dict:
     media_url = None
     if media_type == "video":
         videos = primary.get("videos") or snapshot.get("videos") or []
-        video = videos[0] if videos and isinstance(videos[0], dict) else {}
-        media_url = _first_http_url(video.get("video_hd_url"), video.get("video_sd_url"))
+        # Scan every candidate, not just the first - a malformed/URL-less
+        # first entry shouldn't hide a valid one further down the list.
+        for video in videos:
+            if not isinstance(video, dict):
+                continue
+            media_url = _first_http_url(video.get("video_hd_url"), video.get("video_sd_url"))
+            if media_url:
+                break
     elif media_type == "image":
         images = primary.get("images") or snapshot.get("images") or []
-        image = images[0] if images and isinstance(images[0], dict) else {}
         # Real responses use original_image_url/resized_image_url, not the
         # "url" key shown in the docs' example - confirmed against a live
         # fetch. original_image_url preferred (full quality) over resized.
-        media_url = _first_http_url(
-            image.get("url"), image.get("original_image_url"), image.get("resized_image_url")
-        )
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            media_url = _first_http_url(
+                image.get("url"), image.get("original_image_url"), image.get("resized_image_url")
+            )
+            if media_url:
+                break
 
     return {
         "body": body,
@@ -89,7 +99,9 @@ def normalize_ad(raw: object, brand: str) -> dict | None:
 
     start_date = raw.get("start_date")
     started_at = None
-    if isinstance(start_date, (int, float)):
+    # bool is a subclass of int - exclude it, or "start_date": true would
+    # normalize to a bogus 1970-01-01T00:00:01Z instead of being rejected.
+    if isinstance(start_date, (int, float)) and not isinstance(start_date, bool):
         started_at = datetime.fromtimestamp(start_date, tz=timezone.utc).isoformat()
 
     is_active = raw.get("is_active")

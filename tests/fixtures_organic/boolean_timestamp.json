@@ -1,0 +1,15 @@
+{
+  "id": "3900000000000011_11087474383",
+  "code": "CboolTs1",
+  "media_type": 1,
+  "taken_at": true,
+  "caption": { "text": "taken_at is a boolean, not a real timestamp." },
+  "comment_count": 1,
+  "like_count": 1,
+  "image_versions2": {
+    "candidates": [
+      { "height": 1080, "width": 1080, "url": "https://scontent.cdninstagram.com/v/bool-ts.jpg?sig=abc..." }
+    ]
+  },
+  "url": "https://www.instagram.com/p/CboolTs1/"
+}

@@ -4,7 +4,9 @@ pytest dependency added for this."""
 import json
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -64,6 +66,25 @@ class NormalizeOneAdTests(unittest.TestCase):
     def test_malformed_record_rejected(self):
         self.assertIsNone(normalize_ad(load("malformed.json"), BRAND))
 
+    def test_video_uses_first_valid_candidate_when_earlier_ones_are_bad(self):
+        record = normalize_ad(load("video_ad_later_candidate.json"), BRAND)
+        self.assertIsNotNone(record)
+        self.assertEqual(
+            record["media_url"], "https://video.xx.fbcdn.net/ad-video-later-candidate-hd.mp4"
+        )
+
+    def test_image_uses_first_valid_candidate_when_earlier_ones_are_bad(self):
+        record = normalize_ad(load("image_ad_later_candidate.json"), BRAND)
+        self.assertIsNotNone(record)
+        self.assertEqual(
+            record["media_url"], "https://scontent.xx.fbcdn.net/ad-image-later-candidate.jpg"
+        )
+
+    def test_boolean_start_date_rejected_not_treated_as_timestamp(self):
+        record = normalize_ad(load("boolean_start_date.json"), BRAND)
+        self.assertIsNotNone(record)  # ad itself is still valid, just no date
+        self.assertIsNone(record["started_at"])
+
 
 class NormalizeAdsListTests(unittest.TestCase):
     def test_deduplicates_keeping_first_valid(self):
@@ -113,6 +134,69 @@ class ProviderErrorMessageTests(unittest.TestCase):
         for line in text.splitlines():
             if "raise ScrapeCreatorsError" in line or ("f\"" in line and "ScrapeCreators" in line):
                 self.assertNotIn("api_key", line)
+
+
+SECRET_KEY = "sk_test_should_never_appear_anywhere"
+
+
+class ProviderErrorBehaviorTests(unittest.TestCase):
+    """Behavioral (mocked, no live requests/credits) checks that actual
+    raised error messages are sane and never contain the real key value -
+    supplements the source-scan test above with what really happens at
+    runtime for each failure mode."""
+
+    @mock.patch("ad_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_auth_failure_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 401, "Unauthorized", {}, None
+        )
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+        self.assertIn("401", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("ad_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_non_auth_http_error_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, None
+        )
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+        self.assertIn("500", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("ad_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_timeout_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = TimeoutError()
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+        self.assertIn("timed out", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("ad_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_network_error_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = urllib.error.URLError("no route to host")
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+        self.assertIn("no route to host", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_malformed_json_message_and_no_key_leak(self, mock_urlopen):
+        response = mock.MagicMock()
+        response.read.return_value = b"not json{"
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        mock_urlopen.return_value = response
+
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+        self.assertIn("malformed JSON", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
 
 if __name__ == "__main__":

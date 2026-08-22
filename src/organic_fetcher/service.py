@@ -16,6 +16,13 @@ def fetch_and_normalize() -> dict:
         timeout=config.REQUEST_TIMEOUT_SECONDS,
     )
 
+    if not isinstance(raw, dict):
+        # e.g. the provider returned a bare JSON list/string/null - not the
+        # {"items": [...]} shape at all, distinct from items being missing.
+        raise ScrapeCreatorsError(
+            "ScrapeCreators response was not a JSON object."
+        )
+
     items = raw.get("items")
     if not isinstance(items, list):
         # Distinct from a genuinely empty batch (items: []) - the response

@@ -1,0 +1,19 @@
+{
+  "ad_archive_id": "222222222222221",
+  "is_active": true,
+  "start_date": 1751100000,
+  "page_id": "222222222222222",
+  "page_name": "Aelfric Eden",
+  "title": null,
+  "snapshot": {
+    "body": { "text": "First video candidate is malformed, second is valid." },
+    "display_format": "VIDEO",
+    "cta_text": "Learn More",
+    "cards": [],
+    "images": [],
+    "videos": [
+      { "video_hd_url": "", "video_sd_url": "" },
+      { "video_hd_url": "https://video.xx.fbcdn.net/ad-video-later-candidate-hd.mp4" }
+    ]
+  }
+}

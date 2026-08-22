@@ -4,7 +4,9 @@ same pattern as tests/test_normalizer.py."""
 import json
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -89,6 +91,23 @@ class NormalizeOnePostTests(unittest.TestCase):
     def test_unsupported_media_type_rejected(self):
         self.assertIsNone(norm("unsupported_media_type.json"))
 
+    def test_video_uses_first_valid_candidate_when_earlier_ones_are_bad(self):
+        record = norm("video_post_later_candidate.json")
+        self.assertIsNotNone(record)
+        self.assertEqual(
+            record["media_url"],
+            "https://scontent.cdninstagram.com/o1/v/t2/later-candidate.mp4?sig=abc...",
+        )
+        self.assertEqual(
+            record["thumbnail_url"],
+            "https://scontent.cdninstagram.com/v/thumb-later.jpg?sig=abc...",
+        )
+
+    def test_boolean_taken_at_rejected_not_treated_as_timestamp(self):
+        record = norm("boolean_timestamp.json")
+        self.assertIsNotNone(record)  # post itself is still valid, just no date
+        self.assertIsNone(record["published_at"])
+
 
 class NormalizePostsListTests(unittest.TestCase):
     def test_deduplicates_keeping_first_valid(self):
@@ -120,6 +139,27 @@ class NormalizePostsListTests(unittest.TestCase):
         self.assertEqual(posts, [])
 
 
+def _fake_fetch_returning(value):
+    """Context manager: makes organic_fetcher.service.fetch_instagram_posts
+    return `value` (or call `value()` if callable) instead of making a real
+    request - lets us test service.py's shape-validation in isolation."""
+    from organic_fetcher import service as organic_service
+
+    class _Ctx:
+        def __enter__(self_inner):
+            self_inner.original = organic_service.fetch_instagram_posts
+            organic_service.fetch_instagram_posts = (
+                value if callable(value) else (lambda **_kwargs: value)
+            )
+            return organic_service
+
+        def __exit__(self_inner, *exc_info):
+            organic_service.fetch_instagram_posts = self_inner.original
+            return False
+
+    return _Ctx()
+
+
 class ProviderErrorTests(unittest.TestCase):
     def test_missing_key_raises_without_making_a_request(self):
         with self.assertRaises(ScrapeCreatorsError) as ctx:
@@ -138,22 +178,76 @@ class ProviderErrorTests(unittest.TestCase):
     def test_non_list_items_is_treated_as_provider_error(self):
         # service.py must reject this before normalizer.py ever sees it -
         # a malformed 'items' shape is a provider error, not zero results.
-        from organic_fetcher import service as organic_service
-
         raw = load("malformed_items_response.json")
-
-        class _FakeClientModule:
-            @staticmethod
-            def fetch_instagram_posts(**_kwargs):
-                return raw
-
-        original = organic_service.fetch_instagram_posts
-        organic_service.fetch_instagram_posts = _FakeClientModule.fetch_instagram_posts
-        try:
+        with _fake_fetch_returning(raw):
             with self.assertRaises(ScrapeCreatorsError):
-                organic_service.fetch_and_normalize()
-        finally:
-            organic_service.fetch_instagram_posts = original
+                fetch_and_normalize()
+
+    def test_top_level_list_response_is_a_provider_error(self):
+        with _fake_fetch_returning(["not", "a", "dict"]):
+            with self.assertRaises(ScrapeCreatorsError) as ctx:
+                fetch_and_normalize()
+        self.assertIn("JSON object", str(ctx.exception))
+
+    def test_top_level_string_response_is_a_provider_error(self):
+        with _fake_fetch_returning("not a dict either"):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+    def test_top_level_null_response_is_a_provider_error(self):
+        with _fake_fetch_returning(None):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+
+SECRET_KEY = "sk_test_should_never_appear_anywhere"
+
+
+class ProviderErrorBehaviorTests(unittest.TestCase):
+    """Behavioral (mocked, no live requests/credits) checks on
+    organic_fetcher's own HTTP client - mirrors ad_fetcher's equivalent
+    tests. Supplements the source-scan test above with what the raised
+    error messages actually look like at runtime."""
+
+    @mock.patch("organic_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("organic_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_auth_failure_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = urllib.error.HTTPError("url", 401, "Unauthorized", {}, None)
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_instagram_posts(api_key=SECRET_KEY, handle=HANDLE, timeout=5)
+        self.assertIn("401", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("organic_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("organic_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_timeout_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = TimeoutError()
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_instagram_posts(api_key=SECRET_KEY, handle=HANDLE, timeout=5)
+        self.assertIn("timed out", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("organic_fetcher.scrapecreators_client.time.sleep")
+    @mock.patch("organic_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_network_error_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
+        mock_urlopen.side_effect = urllib.error.URLError("no route to host")
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_instagram_posts(api_key=SECRET_KEY, handle=HANDLE, timeout=5)
+        self.assertIn("no route to host", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+    @mock.patch("organic_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_malformed_json_message_and_no_key_leak(self, mock_urlopen):
+        response = mock.MagicMock()
+        response.read.return_value = b"not json{"
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        mock_urlopen.return_value = response
+
+        with self.assertRaises(ScrapeCreatorsError) as ctx:
+            fetch_instagram_posts(api_key=SECRET_KEY, handle=HANDLE, timeout=5)
+        self.assertIn("malformed JSON", str(ctx.exception))
+        self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
 
 if __name__ == "__main__":
