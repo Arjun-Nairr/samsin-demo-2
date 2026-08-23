@@ -259,7 +259,8 @@ class DatabaseUrlTests(unittest.TestCase):
             with mock.patch("competitive_memory.db.load_env", return_value={"DATABASE_URL": "postgresql://dotenv-value"}):
                 self.assertEqual(db.get_database_url(), "postgresql://env-wins")
 
-    def test_connection_failure_never_exposes_the_dsn(self):
+    @mock.patch("competitive_memory.db.time.sleep")
+    def test_connection_failure_never_exposes_the_dsn(self, _mock_sleep):
         secret_dsn = "postgresql://user:sk_super_secret_password@example.com/db"
         with mock.patch.dict("os.environ", {"DATABASE_URL": secret_dsn}):
             with mock.patch(
@@ -277,6 +278,165 @@ class DatabaseUrlTests(unittest.TestCase):
             db.upsert_ads(conn, [make_ad("A1")])
         self.assertNotIn("DATABASE_URL", str(ctx.exception))
         self.assertNotIn("postgresql://", str(ctx.exception))
+
+
+class ConnectRetryTests(unittest.TestCase):
+    """db.connect()'s bounded timeout/retry policy. No real network -
+    psycopg.connect itself is mocked throughout."""
+
+    def test_connect_timeout_is_passed_to_psycopg(self):
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://fake"}):
+            with mock.patch("competitive_memory.db.psycopg.connect") as mock_connect:
+                mock_connect.return_value = mock.sentinel.connection
+                result = db.connect()
+        self.assertIs(result, mock.sentinel.connection)
+        mock_connect.assert_called_once_with(
+            "postgresql://fake", connect_timeout=db.CONNECT_TIMEOUT_SECONDS
+        )
+
+    @mock.patch("competitive_memory.db.time.sleep")
+    def test_first_attempt_fails_second_succeeds(self, mock_sleep):
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://fake"}):
+            with mock.patch(
+                "competitive_memory.db.psycopg.connect",
+                side_effect=[psycopg.OperationalError("cold start"), mock.sentinel.connection],
+            ) as mock_connect:
+                result = db.connect()
+        self.assertIs(result, mock.sentinel.connection)
+        self.assertEqual(mock_connect.call_count, 2)
+        mock_sleep.assert_called_once_with(db.CONNECT_RETRY_DELAY_SECONDS)
+
+    @mock.patch("competitive_memory.db.time.sleep")
+    def test_both_attempts_fail_raises_persistence_error(self, mock_sleep):
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://fake"}):
+            with mock.patch(
+                "competitive_memory.db.psycopg.connect",
+                side_effect=psycopg.OperationalError("still down"),
+            ) as mock_connect:
+                with self.assertRaises(db.PersistenceError) as ctx:
+                    db.connect()
+        self.assertEqual(mock_connect.call_count, db.MAX_CONNECT_ATTEMPTS)
+        self.assertIn(str(db.MAX_CONNECT_ATTEMPTS), str(ctx.exception))
+        self.assertIn("OperationalError", str(ctx.exception))
+
+    @mock.patch("competitive_memory.db.time.sleep")
+    def test_exactly_one_retry_delay_occurs(self, mock_sleep):
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://fake"}):
+            with mock.patch(
+                "competitive_memory.db.psycopg.connect",
+                side_effect=psycopg.OperationalError("down"),
+            ):
+                with self.assertRaises(db.PersistenceError):
+                    db.connect()
+        self.assertEqual(mock_sleep.call_count, 1)  # MAX_CONNECT_ATTEMPTS - 1
+
+    def test_non_operational_error_is_not_retried(self):
+        # A non-connection-level error (e.g. a programming mistake) should
+        # propagate immediately, not be mistaken for a transient blip.
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://fake"}):
+            with mock.patch(
+                "competitive_memory.db.psycopg.connect", side_effect=ValueError("not a connection issue")
+            ) as mock_connect:
+                with self.assertRaises(ValueError):
+                    db.connect()
+        self.assertEqual(mock_connect.call_count, 1)
+
+
+class RefreshConnectionOrderTests(unittest.TestCase):
+    """Connect-before-fetch and connection-lifecycle behavior in
+    refresh_competitive_memory(). db.connect/db.upsert_ads/fetch are all
+    mocked - no real network, no real database."""
+
+    def _patched(self, connect_side_effect=None, fetch_side_effect=None, upsert_side_effect=None):
+        calls = []
+
+        def fake_connect():
+            calls.append("connect")
+            if connect_side_effect:
+                raise connect_side_effect
+            conn = mock.MagicMock()
+            conn.close = lambda: calls.append("close")
+            return conn
+
+        def fake_fetch():
+            calls.append("fetch")
+            if fetch_side_effect:
+                raise fetch_side_effect
+            return {"count": 1, "ads": [make_ad("A1")]}
+
+        def fake_upsert(conn, ads):
+            calls.append("upsert")
+            if upsert_side_effect:
+                raise upsert_side_effect
+            return {"inserted_count": 1, "updated_count": 0, "ready_for_analysis": ads}
+
+        return calls, fake_connect, fake_fetch, fake_upsert
+
+    def test_connects_before_fetching(self):
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched()
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            refresh_competitive_memory()
+        self.assertEqual(calls, ["connect", "fetch", "upsert", "close"])
+
+    def test_failed_connection_means_fetch_is_never_called(self):
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched(
+            connect_side_effect=db.PersistenceError("down")
+        )
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            with self.assertRaises(db.PersistenceError):
+                refresh_competitive_memory()
+        self.assertEqual(calls, ["connect"])  # fetch and upsert never ran; no credit spent
+
+    def test_successful_connection_allows_fetch(self):
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched()
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            refresh_competitive_memory()
+        self.assertIn("fetch", calls)
+
+    def test_fetch_failure_closes_an_owned_connection(self):
+        from ad_fetcher.scrapecreators_client import ScrapeCreatorsError
+
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched(
+            fetch_side_effect=ScrapeCreatorsError("provider down")
+        )
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            with self.assertRaises(ScrapeCreatorsError):
+                refresh_competitive_memory()
+        self.assertEqual(calls, ["connect", "fetch", "close"])
+
+    def test_upsert_failure_closes_an_owned_connection(self):
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched(
+            upsert_side_effect=db.PersistenceError("rolled back")
+        )
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            with self.assertRaises(db.PersistenceError):
+                refresh_competitive_memory()
+        self.assertEqual(calls, ["connect", "fetch", "upsert", "close"])
+
+    def test_successful_refresh_closes_an_owned_connection(self):
+        calls, fake_connect, fake_fetch, fake_upsert = self._patched()
+        with mock.patch("competitive_memory.service.db.connect", side_effect=fake_connect), \
+             mock.patch("competitive_memory.service.fetch_and_normalize_ads", side_effect=fake_fetch), \
+             mock.patch("competitive_memory.service.db.upsert_ads", side_effect=fake_upsert):
+            refresh_competitive_memory()
+        self.assertIn("close", calls)
+
+    def test_injected_connection_is_never_closed(self):
+        conn = FakeConnection()
+        fake_fetched = {"count": 1, "ads": [make_ad("A1")]}
+        with mock.patch("competitive_memory.service.fetch_and_normalize_ads", return_value=fake_fetched):
+            refresh_competitive_memory(conn=conn)
+        self.assertFalse(conn.closed)
 
 
 class ServiceJsonOutputTests(unittest.TestCase):

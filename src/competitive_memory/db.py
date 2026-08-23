@@ -7,10 +7,18 @@ carry it) in a raised message - PersistenceError messages are hand-written,
 never str(exc) of a connection failure.
 """
 import os
+import time
 
 import psycopg
 
 from ad_fetcher.config import load_env  # reused .env parser, not duplicated
+
+# Bounded connection policy: a Neon cold-start/transient blip gets one retry,
+# but a real outage fails fast rather than hanging the caller (and, upstream
+# in service.py, this runs *before* any ScrapeCreators credit is spent).
+CONNECT_TIMEOUT_SECONDS = 17
+MAX_CONNECT_ATTEMPTS = 2
+CONNECT_RETRY_DELAY_SECONDS = 2
 
 
 class PersistenceError(Exception):
@@ -28,17 +36,31 @@ def get_database_url() -> str:
 
 
 def connect() -> psycopg.Connection:
-    """One connection per CLI invocation. Neon's pooled connection string
-    works here unchanged - it's just an ordinary PostgreSQL DSN to psycopg."""
+    """One connection per CLI invocation (or per migration run). Neon's
+    pooled connection string works here unchanged - it's just an ordinary
+    PostgreSQL DSN to psycopg.
+
+    Retries only connection-level failures (psycopg.OperationalError) up to
+    MAX_CONNECT_ATTEMPTS, with a short fixed delay - a transient Neon
+    cold-start/blip gets one second chance; anything else (bad credentials,
+    a real outage) fails after that, not indefinitely.
+    """
     dsn = get_database_url()
-    try:
-        return psycopg.connect(dsn)
-    except psycopg.Error as exc:
-        # Deliberately not including str(exc) or the DSN - a libpq
-        # connection error can embed host/port details.
-        raise PersistenceError(
-            f"Could not connect to the database ({exc.__class__.__name__})."
-        ) from exc
+    last_error = None
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return psycopg.connect(dsn, connect_timeout=CONNECT_TIMEOUT_SECONDS)
+        except psycopg.OperationalError as exc:
+            last_error = exc
+            if attempt < MAX_CONNECT_ATTEMPTS:
+                time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+
+    # Deliberately not including str(last_error) or the DSN - a libpq
+    # connection error can embed host/port details.
+    raise PersistenceError(
+        f"Could not connect to the database after {MAX_CONNECT_ATTEMPTS} attempts "
+        f"({last_error.__class__.__name__})."
+    ) from last_error
 
 
 _INSERT_SQL = """

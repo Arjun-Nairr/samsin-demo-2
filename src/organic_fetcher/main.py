@@ -16,7 +16,10 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
-        print(f"error: unexpected failure: {exc}", file=sys.stderr)
+        # Never str(exc) here - an unexpected exception (unlike the
+        # sanitized ScrapeCreatorsError above) could contain anything,
+        # including a credential. Class name only.
+        print(f"error: unexpected failure ({exc.__class__.__name__}).", file=sys.stderr)
         return 1
 
     print(json.dumps(output, indent=2))

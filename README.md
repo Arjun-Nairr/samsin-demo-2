@@ -53,6 +53,11 @@ configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py).
 
 ## Run tests
 
+Install dependencies first (`pip install -r requirements.txt` — see
+Setup step 4 above), otherwise `test_competitive_memory.py` and
+`test_cli_error_handling.py` fail to import (`psycopg` not installed),
+even though they never open a real database connection.
+
 ```bash
 python -m unittest discover -s tests -v
 ```
@@ -189,11 +194,16 @@ Same contract as Sequences A and B: stdout=JSON only on success, stderr +
 non-zero exit on failure, neither `SCRAPECREATORS_API_KEY` nor
 `DATABASE_URL` is ever printed, logged, or included in an error message.
 
-This fetches Sequence A's normalized ads, upserts them into `competitor_ads`
-by `ad_id` (the primary key — this is the whole deduplication mechanism,
-no separate dedup table), and reports which ads were newly discovered.
-This command is the intended integration point for a future scheduler or
-OpenClaw — neither is built here.
+This connects to Neon **first**, before calling ScrapeCreators — if the
+database is unreachable, no paid request is made and no credit is spent.
+The connection attempt is bounded: an explicit ~17s `connect_timeout`,
+retried once (one ~2s delay) only for a connection-level failure, never
+retried indefinitely. Once connected, it fetches Sequence A's normalized
+ads, upserts them into `competitor_ads` by `ad_id` (the primary key — this
+is the whole deduplication mechanism, no separate dedup table), and
+reports which ads were newly discovered. This command is the intended
+integration point for a future scheduler or OpenClaw — neither is built
+here.
 
 ### Expected output shape
 
