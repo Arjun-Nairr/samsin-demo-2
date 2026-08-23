@@ -1,32 +1,52 @@
 # Samsin Ad Intelligence
 
-Two independent, small CLIs against the ScrapeCreators API:
+Three small, mostly-independent pieces against the ScrapeCreators API and
+one Postgres database:
 
 - **Sequence A** (`ad_fetcher`): paid Meta/Facebook ad-library ads for one
   hardcoded competitor (Aelfric Eden).
 - **Sequence B** (`organic_fetcher`): public organic Instagram posts/reels
   for one hardcoded account (`aelfricedenofficial`).
+- **Sequence C** (`competitive_memory`): runs Sequence A's fetch, then
+  persists/upserts the normalized ads into a `competitor_ads` table in
+  Neon PostgreSQL, and reports which ads are newly discovered this run —
+  the "active competitive memory" that a later (not-yet-built) analysis
+  stage will read from. Sequence B (organic Instagram posts) is entirely
+  separate — it is not stored in Neon, not matched against ads, and not a
+  prerequisite for running Sequence C at all.
 
-Both: one provider call, no pagination, no database, no scheduling, no
-scoring. They do not talk to each other — see `HANDOFF.md` for why (organic
-vs. paid metrics must stay separate) and what Sequence C would add.
+One provider call each, no pagination, no scheduling, no scoring, no AI
+analysis yet. See `HANDOFF.md` for design history and what's deferred.
 
 ## Setup
 
 1. Create a ScrapeCreators account at https://scrapecreators.com and get one
    API key from your dashboard.
-2. Copy `.env.example` to `.env`:
+2. For Sequence C only: create a free Neon project at https://neon.tech,
+   open its dashboard, and copy the **pooled** connection string (the one
+   with `-pooler` in the hostname) — Neon's pooled string is just an
+   ordinary PostgreSQL connection string to this app, no special handling
+   needed.
+3. Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
-   Then edit `.env` and set `SCRAPECREATORS_API_KEY=<your key>`.
-   (Alternatively, set `SCRAPECREATORS_API_KEY` directly in your shell —
-   an env var, when set, wins over `.env`.)
-3. No third-party dependencies to install — everything here uses the Python
-   standard library (`urllib`, `json`, `unittest`). Any Python 3.10+ works.
+   Then edit `.env` and set `SCRAPECREATORS_API_KEY=<your key>` and (for
+   Sequence C) `DATABASE_URL=<your Neon pooled connection string>`.
+   (Alternatively, set either directly in your shell — an env var, when
+   set, always wins over `.env`.)
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   This is the one dependency in the whole repo: `psycopg[binary]`, needed
+   only for Sequence C. Sequences A and B still use nothing but the Python
+   standard library.
 
 The one competitor (`Aelfric Eden`) is configured in one place:
 [`src/ad_fetcher/config.py`](src/ad_fetcher/config.py) — the `COMPETITOR` dict.
+Sequence C reuses this configuration; there is no second place a
+competitor is named.
 
 The one Instagram account for Sequence B (`aelfricedenofficial`) is
 configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py).
@@ -37,8 +57,12 @@ configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py).
 python -m unittest discover -s tests -v
 ```
 
-Runs both Sequence A's and Sequence B's tests together (28 total) — a
-regression in one shows up when you run the other.
+Runs Sequence A's, B's, and C's tests together — a regression in one shows
+up when you run the others. (Don't hardcode the count here — it changes
+every time a test is added; run the command above to see the current
+number and confirm `OK`.) None of these tests touch a live database, make
+a live ScrapeCreators request, spend API credits, or need network access —
+Sequence C's database tests use a small in-memory fake connection.
 
 ## Run Sequence A (paid ads)
 
@@ -143,6 +167,98 @@ failure, API key never printed.
   is never renamed `ad_view_count`, and Sequence B never touches Sequence
   A's output — matching them is explicitly Sequence C's (undocumented,
   unimplemented) job.
+
+## Run Sequence C (persist paid ads to Neon)
+
+One-time setup — apply the migration (safe to re-run; only ever creates
+the table if it doesn't already exist, never drops or alters anything):
+
+```bash
+cd src
+python -m competitive_memory.migrate
+```
+
+Then, for every refresh:
+
+```bash
+cd src
+python -m competitive_memory.main
+```
+
+Same contract as Sequences A and B: stdout=JSON only on success, stderr +
+non-zero exit on failure, neither `SCRAPECREATORS_API_KEY` nor
+`DATABASE_URL` is ever printed, logged, or included in an error message.
+
+This fetches Sequence A's normalized ads, upserts them into `competitor_ads`
+by `ad_id` (the primary key — this is the whole deduplication mechanism,
+no separate dedup table), and reports which ads were newly discovered.
+This command is the intended integration point for a future scheduler or
+OpenClaw — neither is built here.
+
+### Expected output shape
+
+```json
+{
+  "fetched_count": 20,
+  "inserted_count": 7,
+  "updated_count": 13,
+  "ready_for_analysis_count": 7,
+  "ready_for_analysis": [
+    {
+      "ad_id": "123",
+      "brand": "Aelfric Eden",
+      "body": "...",
+      "headline": "...",
+      "cta": "...",
+      "media_type": "image",
+      "media_url": "https://...",
+      "started_at": "2026-08-01T00:00:00+00:00",
+      "is_active": true,
+      "snapshot_url": "https://..."
+    }
+  ]
+}
+```
+
+`ready_for_analysis` uses Sequence A's own normalized shape — `media_url`,
+not the database column name `latest_media_url` — so this output is a
+drop-in continuation of Sequence A's contract, not a new one.
+
+### What `first_seen_at`, `last_seen_at`, and `times_seen` mean
+
+- **`first_seen_at`** — set once, by the database (`DEFAULT NOW()`), the
+  first time an `ad_id` is ever inserted. Never overwritten afterward.
+- **`last_seen_at`** — updated to the current database time on every run
+  that ad appears in the fetch again. Tells you how recently it was still
+  running, independent of whether anything about it changed.
+- **`times_seen`** — increments by exactly 1 per run the ad appears in,
+  regardless of how many of its fields changed that run. It's an
+  observation counter, not a content-change counter.
+
+### Important limitations (read before trusting this for analysis)
+
+- **Media URLs expire.** Meta's and Instagram's CDN URLs carry short-lived
+  signed tokens. `latest_media_url` is *the latest one seen*, useful
+  immediately, **not durable storage** — this milestone does not download
+  or persist competitor media anywhere (no ImgBB upload, no local copy).
+  A stored ad's URL from three days ago may already be dead. The intended
+  future flow is: new ad discovered → persisted → analyzed *in the same
+  run*, while the URL is still fresh → analysis result stored — not
+  implemented yet.
+- **A changed signed URL alone is never "new."** Only an `ad_id` absent
+  from the table triggers an insert / a `ready_for_analysis` entry. If the
+  same ad's CDN URL rotates between runs, that's an update, not a new
+  discovery.
+- **Missing from a fetch ≠ inactive.** Each run is a small first-page
+  batch (~20 ads), not the advertiser's full account. An ad absent from
+  today's batch is not evidence it stopped running — `is_active` is only
+  ever changed when the provider explicitly returns a boolean for that ad
+  in the fetch that mentions it; it is never flipped to `false` (or to
+  anything) just because the ad wasn't in this batch.
+- **No weighting, scoring, or AI analysis yet.** `analysis_status` starts
+  `'pending'` and is not otherwise touched by this milestone — no
+  weighting formula has been approved, and no analysis schema exists yet
+  (it will be designed from real Gemini trials, not guessed in advance).
 
 ## Design notes
 

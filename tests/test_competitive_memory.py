@@ -1,0 +1,303 @@
+"""Sequence C persistence tests. No live Neon database, no network, no
+credits - a small in-memory fake connection/cursor that implements the
+exact semantics of db.py's two fixed SQL statements (INSERT/UPDATE/SELECT
+against competitor_ads), so the row-level contract (first_seen_at
+preserved, times_seen increments, started_at/is_active COALESCE, rollback
+discards partial writes) can be verified without a real database.
+"""
+import sys
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import psycopg  # noqa: E402
+
+from competitive_memory import db  # noqa: E402
+from competitive_memory.service import refresh_competitive_memory  # noqa: E402
+
+BRAND = "Aelfric Eden"
+
+
+def make_ad(ad_id, media_url="https://cdn.example/img.jpg", started_at="2026-01-01T00:00:00+00:00", is_active=True, body="body"):
+    return {
+        "ad_id": ad_id,
+        "brand": BRAND,
+        "body": body,
+        "headline": "",
+        "cta": "Shop now",
+        "media_type": "image",
+        "media_url": media_url,
+        "started_at": started_at,
+        "is_active": is_active,
+        "snapshot_url": f"https://www.facebook.com/ads/library/?id={ad_id}",
+    }
+
+
+class FakeCursor:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        self._conn._execute(sql, params)
+
+    def fetchall(self):
+        return self._conn._last_fetch
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+class FakeConnection:
+    """In-memory stand-in for a psycopg connection, scoped exactly to the
+    three statements db.py issues. `table` is the committed state (what a
+    prior run would have persisted); `_pending` buffers writes until
+    commit() applies them - so a rollback provably discards them."""
+
+    def __init__(self, initial_rows=None, now=None, fail_after=None):
+        self.table = {k: dict(v) for k, v in (initial_rows or {}).items()}
+        self._pending = []
+        self._last_fetch = []
+        self.now = now or datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.fail_after = fail_after
+        self._exec_count = 0
+        self.committed = False
+        self.rolled_back = False
+        self.closed = False
+
+    def cursor(self):
+        return FakeCursor(self)
+
+    def _execute(self, sql, params):
+        self._exec_count += 1
+        if self.fail_after is not None and self._exec_count > self.fail_after:
+            raise psycopg.OperationalError("simulated failure")
+
+        stripped = sql.strip()
+        if stripped.startswith("SELECT"):
+            (ids,) = params
+            self._last_fetch = [(i,) for i in ids if i in self.table]
+        elif stripped.startswith("INSERT"):
+            row = {
+                "brand": params["brand"],
+                "body": params["body"],
+                "headline": params["headline"],
+                "cta": params["cta"],
+                "media_type": params["media_type"],
+                "latest_media_url": params["media_url"],
+                "snapshot_url": params["snapshot_url"],
+                "started_at": params["started_at"],
+                "is_active": params["is_active"],
+                "first_seen_at": self.now,
+                "last_seen_at": self.now,
+                "times_seen": 1,
+                "analysis_status": "pending",
+                "created_at": self.now,
+                "updated_at": self.now,
+            }
+            self._pending.append(("insert", params["ad_id"], row))
+        elif stripped.startswith("UPDATE"):
+            ad_id = params["ad_id"]
+            existing = self.table[ad_id]
+            updated = dict(existing)
+            updated["brand"] = params["brand"]
+            updated["body"] = params["body"]
+            updated["headline"] = params["headline"]
+            updated["cta"] = params["cta"]
+            updated["media_type"] = params["media_type"]
+            updated["latest_media_url"] = params["media_url"]
+            updated["snapshot_url"] = params["snapshot_url"]
+            updated["started_at"] = params["started_at"] if params["started_at"] is not None else existing["started_at"]
+            updated["is_active"] = params["is_active"] if params["is_active"] is not None else existing["is_active"]
+            updated["last_seen_at"] = self.now
+            updated["times_seen"] = existing["times_seen"] + 1
+            updated["updated_at"] = self.now
+            # first_seen_at, created_at, analysis_status: untouched
+            self._pending.append(("update", ad_id, updated))
+        else:
+            raise AssertionError(f"unexpected SQL in FakeConnection: {sql!r}")
+
+    def commit(self):
+        for _op, ad_id, row in self._pending:
+            self.table[ad_id] = row
+        self._pending = []
+        self.committed = True
+
+    def rollback(self):
+        self._pending = []
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+
+class UpsertNewAdTests(unittest.TestCase):
+    def test_new_ad_is_inserted(self):
+        conn = FakeConnection()
+        result = db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(result["inserted_count"], 1)
+        self.assertEqual(result["updated_count"], 0)
+        self.assertEqual(len(result["ready_for_analysis"]), 1)
+        self.assertEqual(result["ready_for_analysis"][0]["ad_id"], "A1")
+        self.assertIn("A1", conn.table)
+        self.assertEqual(conn.table["A1"]["times_seen"], 1)
+        self.assertEqual(conn.table["A1"]["analysis_status"], "pending")
+        self.assertTrue(conn.committed)
+
+
+class UpsertExistingAdTests(unittest.TestCase):
+    def test_repeated_ad_is_updated_not_duplicated(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("A1")])
+        result = db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(len(conn.table), 1)  # not duplicated
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(result["updated_count"], 1)
+        self.assertEqual(result["ready_for_analysis"], [])
+
+    def test_first_seen_at_is_preserved(self):
+        conn = FakeConnection(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        db.upsert_ads(conn, [make_ad("A1")])
+        original_first_seen = conn.table["A1"]["first_seen_at"]
+
+        conn.now = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(conn.table["A1"]["first_seen_at"], original_first_seen)
+
+    def test_last_seen_at_changes_on_later_observation(self):
+        conn = FakeConnection(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        db.upsert_ads(conn, [make_ad("A1")])
+        first_last_seen = conn.table["A1"]["last_seen_at"]
+
+        conn.now = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertNotEqual(conn.table["A1"]["last_seen_at"], first_last_seen)
+        self.assertEqual(conn.table["A1"]["last_seen_at"], datetime(2026, 1, 2, tzinfo=timezone.utc))
+
+    def test_times_seen_increments_exactly_once_per_run(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(conn.table["A1"]["times_seen"], 1)
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(conn.table["A1"]["times_seen"], 2)
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(conn.table["A1"]["times_seen"], 3)
+
+    def test_existing_analysis_status_is_preserved(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("A1")])
+        conn.table["A1"]["analysis_status"] = "processing"  # simulate a later analysis stage
+
+        db.upsert_ads(conn, [make_ad("A1")])
+        self.assertEqual(conn.table["A1"]["analysis_status"], "processing")
+
+    def test_null_started_at_does_not_erase_existing_value(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("A1", started_at="2026-01-01T00:00:00+00:00")])
+        self.assertEqual(conn.table["A1"]["started_at"], "2026-01-01T00:00:00+00:00")
+
+        db.upsert_ads(conn, [make_ad("A1", started_at=None)])
+        self.assertEqual(conn.table["A1"]["started_at"], "2026-01-01T00:00:00+00:00")
+
+    def test_changed_signed_media_url_is_not_newly_discovered(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("A1", media_url="https://cdn.example/v1-signed-abc.jpg")])
+
+        result = db.upsert_ads(conn, [make_ad("A1", media_url="https://cdn.example/v2-signed-xyz.jpg")])
+        self.assertEqual(result["ready_for_analysis"], [])
+        self.assertEqual(result["updated_count"], 1)
+        # the URL itself is still refreshed, just not treated as "new"
+        self.assertEqual(conn.table["A1"]["latest_media_url"], "https://cdn.example/v2-signed-xyz.jpg")
+
+
+class MixedBatchTests(unittest.TestCase):
+    def test_only_newly_inserted_ads_are_ready_for_analysis(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("OLD1")])  # seed one existing ad
+
+        result = db.upsert_ads(conn, [make_ad("OLD1"), make_ad("NEW1"), make_ad("NEW2")])
+        self.assertEqual(result["inserted_count"], 2)
+        self.assertEqual(result["updated_count"], 1)
+        self.assertEqual({a["ad_id"] for a in result["ready_for_analysis"]}, {"NEW1", "NEW2"})
+
+
+class RollbackTests(unittest.TestCase):
+    def test_database_failure_rolls_back_the_batch(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("OLD1")])  # 1 prior execute (the SELECT) - seed committed state
+
+        # Fail partway through a 3-ad batch: allow the SELECT (1) and the
+        # first INSERT (2) to succeed, then blow up.
+        conn.fail_after = conn._exec_count + 2
+        with self.assertRaises(db.PersistenceError):
+            db.upsert_ads(conn, [make_ad("NEW1"), make_ad("NEW2"), make_ad("NEW3")])
+
+        self.assertTrue(conn.rolled_back)
+        # None of the new batch's ads were persisted - not even the one
+        # whose INSERT ran before the failure.
+        self.assertEqual(set(conn.table.keys()), {"OLD1"})
+
+
+class DatabaseUrlTests(unittest.TestCase):
+    def test_missing_database_url_raises_clear_error(self):
+        with mock.patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("DATABASE_URL", None)
+            with mock.patch("competitive_memory.db.load_env", return_value={}):
+                with self.assertRaises(db.PersistenceError) as ctx:
+                    db.get_database_url()
+        self.assertIn("DATABASE_URL", str(ctx.exception))
+
+    def test_env_var_overrides_dotenv(self):
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://env-wins"}):
+            with mock.patch("competitive_memory.db.load_env", return_value={"DATABASE_URL": "postgresql://dotenv-value"}):
+                self.assertEqual(db.get_database_url(), "postgresql://env-wins")
+
+    def test_connection_failure_never_exposes_the_dsn(self):
+        secret_dsn = "postgresql://user:sk_super_secret_password@example.com/db"
+        with mock.patch.dict("os.environ", {"DATABASE_URL": secret_dsn}):
+            with mock.patch(
+                "competitive_memory.db.psycopg.connect",
+                side_effect=psycopg.OperationalError(f"connection failed: {secret_dsn}"),
+            ):
+                with self.assertRaises(db.PersistenceError) as ctx:
+                    db.connect()
+        self.assertNotIn("sk_super_secret_password", str(ctx.exception))
+        self.assertNotIn(secret_dsn, str(ctx.exception))
+
+    def test_query_failure_never_exposes_the_dsn(self):
+        conn = FakeConnection(fail_after=0)
+        with self.assertRaises(db.PersistenceError) as ctx:
+            db.upsert_ads(conn, [make_ad("A1")])
+        self.assertNotIn("DATABASE_URL", str(ctx.exception))
+        self.assertNotIn("postgresql://", str(ctx.exception))
+
+
+class ServiceJsonOutputTests(unittest.TestCase):
+    def test_ready_for_analysis_contains_only_newly_inserted_ads(self):
+        conn = FakeConnection()
+        db.upsert_ads(conn, [make_ad("OLD1")])  # seed an existing ad
+
+        fake_fetched = {"count": 2, "ads": [make_ad("OLD1"), make_ad("NEW1")]}
+        with mock.patch("competitive_memory.service.fetch_and_normalize_ads", return_value=fake_fetched):
+            output = refresh_competitive_memory(conn=conn)
+
+        self.assertEqual(output["fetched_count"], 2)
+        self.assertEqual(output["inserted_count"], 1)
+        self.assertEqual(output["updated_count"], 1)
+        self.assertEqual(output["ready_for_analysis_count"], 1)
+        self.assertEqual([a["ad_id"] for a in output["ready_for_analysis"]], ["NEW1"])
+        # Sequence A's contract key is `media_url`, not the DB column name.
+        self.assertIn("media_url", output["ready_for_analysis"][0])
+        self.assertNotIn("latest_media_url", output["ready_for_analysis"][0])
+        self.assertFalse(conn.closed)  # injected connection - caller owns it, not us
+
+
+if __name__ == "__main__":
+    unittest.main()

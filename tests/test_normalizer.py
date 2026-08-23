@@ -15,6 +15,7 @@ from ad_fetcher.scrapecreators_client import (  # noqa: E402
     ScrapeCreatorsError,
     fetch_company_ads,
 )
+from ad_fetcher.service import fetch_and_normalize  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 BRAND = "Aelfric Eden"
@@ -197,6 +198,68 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
             fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
         self.assertIn("malformed JSON", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
+
+
+def _fake_fetch_returning(value):
+    """Context manager: makes ad_fetcher.service.fetch_company_ads return
+    `value` instead of making a real request - tests service.py's top-level
+    response-shape validation in isolation. Mirrors organic_fetcher's
+    equivalent test helper."""
+    from ad_fetcher import service as ad_service
+
+    class _Ctx:
+        def __enter__(self_inner):
+            self_inner.original = ad_service.fetch_company_ads
+            ad_service.fetch_company_ads = lambda **_kwargs: value
+            return ad_service
+
+        def __exit__(self_inner, *exc_info):
+            ad_service.fetch_company_ads = self_inner.original
+            return False
+
+    return _Ctx()
+
+
+class ServiceResponseShapeTests(unittest.TestCase):
+    """Preflight fix: ad_fetcher.service used to call raw.get(...) assuming
+    a dict. Now mirrors organic_fetcher's hardened shape validation."""
+
+    def test_top_level_list_is_a_provider_error(self):
+        with _fake_fetch_returning(["not", "a", "dict"]):
+            with self.assertRaises(ScrapeCreatorsError) as ctx:
+                fetch_and_normalize()
+        self.assertIn("JSON object", str(ctx.exception))
+
+    def test_top_level_string_is_a_provider_error(self):
+        with _fake_fetch_returning("not a dict either"):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+    def test_top_level_number_is_a_provider_error(self):
+        with _fake_fetch_returning(42):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+    def test_top_level_null_is_a_provider_error(self):
+        with _fake_fetch_returning(None):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+    def test_missing_results_key_is_a_provider_error(self):
+        with _fake_fetch_returning({"success": True}):
+            with self.assertRaises(ScrapeCreatorsError) as ctx:
+                fetch_and_normalize()
+        self.assertIn("results", str(ctx.exception))
+
+    def test_non_list_results_is_a_provider_error(self):
+        with _fake_fetch_returning({"results": "not-a-list"}):
+            with self.assertRaises(ScrapeCreatorsError):
+                fetch_and_normalize()
+
+    def test_valid_empty_results_is_not_an_error(self):
+        with _fake_fetch_returning({"results": []}):
+            output = fetch_and_normalize()
+        self.assertEqual(output, {"count": 0, "ads": []})
 
 
 if __name__ == "__main__":

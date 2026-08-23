@@ -1,19 +1,39 @@
-# Handoff — Sequences A & B
+# Handoff — Sequences A, B & C
 
 ## Current status (read this first)
 
 - **Sequence A** (paid Meta ads, `ad_fetcher`) — **implemented, tested, live-verified.**
 - **Sequence B** (organic Instagram posts, `organic_fetcher`) — **implemented, tested, live-verified.**
-- **Sequence C** (matching ads to organic posts) — **not implemented.** Scope
-  is documented only, at the bottom of this file.
+- **Sequence C** (Neon persistence of paid ads, `competitive_memory`) —
+  **implemented, tested offline (67 tests). Neon migration and a direct
+  smoke test (insert/select/delete) are real, live-verified.** A real
+  end-to-end `competitive_memory.main` run spent 1 ScrapeCreators credit
+  and then failed at the database-connection step with a transient-looking
+  `OperationalError` — a follow-up bare connection check succeeded, but
+  **no successful real end-to-end run has been observed yet.** See the
+  "Neon verification status" subsection under "Sequence C — Neon
+  Persistence" for the exact sequence of what was and wasn't verified.
+  *(Note: an earlier part of this file used "Sequence C" to mean a future
+  ads↔organic-post matching audit. That name has been reassigned to this
+  persistence milestone instead — see the marked note where that occurs.)*
+- Ads↔organic-post matching, AI analysis, weighting, and everything else
+  in Sequence C's non-goals list — **not implemented**, documented only.
 - Everything below this point is presented in the order it was written,
   oldest first, so history is preserved. Where an older section's status
   claim has since changed, it is marked **(superseded)** with a pointer to
   the current statement — do not read an unmarked older section as current
   without checking for a later update.
-- The cleanup pass below started from a clean tree at `b3e44a2` and ended
-  committed and pushed as `b23d505` — `HEAD` and `origin/main` both at
-  `b23d505` as of this line. See "Cleanup pass" at the bottom for details.
+- The Neon project used for verification had one pre-existing table,
+  `hermes_runs` (28 rows, unrelated to this repo — from a different,
+  separate project). It was dropped with explicit user confirmation after
+  the mismatch between the brief's description and what was actually
+  found was surfaced first. See "Neon verification status" for the exact
+  sequence of events.
+- Git status as of the start of the Sequence C milestone: clean, `HEAD`
+  and `origin/main` both at `9bb184e`. Committed and pushed since — check
+  `git log`/`git status` directly for the current authoritative state
+  rather than trusting a specific commit hash written here, since this
+  file is not guaranteed to be updated the instant something is pushed.
 
 ## Milestone completed (Sequence A)
 
@@ -684,8 +704,323 @@ Confirmed by reading (not running) the following files in that project:
 - No credentials were copied, and the old project's `.env` was not opened,
   read, or printed at any point.
 
-## What remains for Sequence C (documentation only — not implemented)
+## What remains for Sequence C — superseded naming, see below
+
+*(At the time this was written, "Sequence C" meant a future deterministic
+audit of whether advertisements can be matched to organic posts. The next
+milestone actually built and named "Sequence C" was something else instead
+— Neon persistence of paid ads. See the "Sequence C — Neon Persistence"
+section below for what Sequence C actually is now. The ads↔organic-post
+matching audit described here is still unbuilt and unscheduled; it simply
+no longer has a sequence letter reserved for it.)*
 
 Deterministic audit of whether advertisements can be matched to organic
 posts using stable IDs, explicit URLs, or exact creative evidence. Not
-started, not scoped further than that one sentence, per the brief.
+started, not scoped further than that one sentence, per the original brief.
+
+---
+
+# Sequence C — Neon Persistence
+
+## Milestone completed
+
+`Sequence A paid-ad fetch → normalize → persist/upsert into Neon
+PostgreSQL (`competitor_ads`, keyed by `ad_id`) → identify newly
+discovered ads → return them for a future (not-yet-built) analysis step.`
+This is the persistent "active competitive memory." No AI analysis,
+weighting, matching, generation, scheduling, or Instagram publishing was
+added — all explicitly deferred per the brief.
+
+## Starting point
+
+Read `README.md` and this entire file, inspected every source/test file,
+ran `git status` (clean, `HEAD`/`origin/main` at `9bb184e`) and the full
+test suite (45 passed) before changing anything. `psycopg` was not
+installed in this environment; installed it locally (`pip install
+"psycopg[binary]>=3,<4"`, matching the declared dependency) so the new
+tests could actually run — no other environment changes made.
+
+## Files added
+
+```
+requirements.txt                            psycopg[binary]>=3,<4 — the
+                                             only third-party dependency
+                                             in the whole repo
+migrations/0001_create_competitor_ads.sql   plain SQL, CREATE TABLE IF
+                                             NOT EXISTS, idempotent
+src/competitive_memory/
+  __init__.py
+  db.py             isolated SQL: connect(), upsert_ads() — the only file
+                     that knows this is PostgreSQL
+  service.py        refresh_competitive_memory() — reuses
+                     ad_fetcher.service.fetch_and_normalize() unmodified
+  main.py           CLI, same stdout/stderr/exit-code contract as A and B
+  migrate.py        applies the migration; `python -m competitive_memory.migrate`
+tests/
+  test_competitive_memory.py   15 tests, in-memory fake connection/cursor,
+                                no live database anywhere
+```
+
+## Files changed
+
+```
+src/ad_fetcher/service.py   preflight fix - see below
+.env.example                added DATABASE_URL= (blank)
+tests/test_normalizer.py    +7 tests for the preflight fix
+README.md                   Sequence C usage, setup, output shape, Neon
+                             account/connection-string instructions;
+                             de-hardcoded the stale "28 tests" count
+HANDOFF.md                  this section + the superseded-naming note above
+```
+
+No files removed. No files in `ad_fetcher/normalizer.py`,
+`ad_fetcher/scrapecreators_client.py`, or anything in `organic_fetcher/`
+were touched — Sequence B remains exactly as it was, and is not a
+prerequisite for Sequence C.
+
+## Required preflight fix (done first, before any database code)
+
+`ad_fetcher.service.fetch_and_normalize()` called `raw.get("results") or
+[]` directly, assuming `raw` was always a dict — the same gap
+`organic_fetcher.service` already had fixed in the prior cleanup pass.
+Fixed identically: reject a non-dict top-level response, and distinguish a
+missing/non-list `results` (provider error) from a valid empty `results:
+[]` (zero ads, not an error). Sequence A's successful output contract
+(`{"count": N, "ads": [...]}`) is byte-for-byte unchanged for every
+previously-passing case — confirmed by every pre-existing Sequence A test
+still passing, plus the new `test_valid_empty_results_is_not_an_error`
+test asserting the exact old shape for the empty case.
+
+## Key implementation decisions
+
+- **Reuse, not duplication**: `competitive_memory.service` imports
+  `ad_fetcher.service.fetch_and_normalize` directly — Sequence C does not
+  re-fetch or re-normalize anything itself, it only persists what
+  Sequence A already produces. `db.py` imports `ad_fetcher.config.load_env`
+  for the `.env` parser (one parser, one behavior, reused a third time).
+- **`ad_id` is the entire deduplication mechanism** — no separate
+  dedup/processed-ad table, matching the brief exactly. One `SELECT ad_id
+  ... WHERE ad_id = ANY(%s)` per run determines the insert/update split;
+  no per-row existence query (avoids N+1 for the ~20-row batch).
+- **One transaction per run**: the existence check, every insert, and
+  every update happen inside one `try`/`except psycopg.Error` block,
+  committed once at the end or rolled back entirely on any failure — no
+  partial persistence is possible, verified by a dedicated rollback test.
+- **`COALESCE` does the "don't erase, don't wrongly flip" work in SQL,
+  not Python**: `started_at = COALESCE(%(started_at)s, started_at)` and
+  `is_active = COALESCE(%(is_active)s, is_active)` mean a `null` in this
+  run's fetch (Sequence A already normalizes "provider didn't say" to
+  `null`) never overwrites a previously known value — this is also how
+  "don't mark absent ads inactive" and "don't erase a real `started_at`"
+  end up being the same one-line mechanism, not two.
+- **A changed signed media URL never triggers a "new ad"**: the insert/
+  update split is based purely on `ad_id` presence, computed *before* any
+  row is written. `latest_media_url` is still refreshed on every update
+  (so the next stage always has the freshest usable link) — it just never
+  causes an ad to reappear in `ready_for_analysis`.
+- **No database code in the provider client or normalizer.**
+  `scrapecreators_client.py` and `normalizer.py` are untouched by this
+  milestone; `db.py` is the only file that imports `psycopg`.
+- **Credential safety**: `db.py` never interpolates `str(exc)` from a
+  connection failure into a raised message (a libpq connection error can
+  embed host/port), and never touches the DSN in the update/insert SQL
+  text itself (SQL is static, parameters are passed separately — no
+  string-built SQL anywhere in this file).
+- **Dependency file choice**: the repo had no `requirements.txt`,
+  `pyproject.toml`, or any dependency manifest before this — added the
+  simplest one (`requirements.txt`, one line) consistent with a
+  stdlib-only project gaining its first-ever dependency. No `pyproject.toml`
+  packaging metadata was introduced for one runtime dependency.
+
+## Database schema
+
+One migration, one table, exactly the columns specified in the brief —
+[`migrations/0001_create_competitor_ads.sql`](migrations/0001_create_competitor_ads.sql).
+`CREATE TABLE IF NOT EXISTS` — safe to run more than once, never drops,
+never deletes. Constraints added only where they directly protect the
+contract: `media_type IN ('image','video')`, `times_seen >= 1`,
+`analysis_status IN ('pending','processing','complete','failed')`. No
+weighting columns, no analysis JSON column, no separate duplicate/score/
+run-history/competitor/processed-ad tables — all explicitly deferred per
+the brief.
+
+## Commands actually run
+
+```
+git status                                        → clean, HEAD/origin/main at 9bb184e
+python -m unittest discover -s tests -v            → 45 passed (before any change)
+pip install "psycopg[binary]>=3,<4"                → installed (dev/test environment only)
+python -m unittest discover -s tests -v            → 67 passed (after all changes:
+                                                       45 original + 7 preflight-fix
+                                                       tests + 15 Sequence C tests)
+cd src && python -c "import competitive_memory.db, ...main, ...migrate"
+                                                    → all modules import cleanly (syntax/
+                                                       import sanity check, no execution)
+cd src && python -m competitive_memory.migrate     → exit 1, stderr:
+  "error: Missing DATABASE_URL. Set it in .env or the environment before running."
+  (real, unmocked - genuinely no DATABASE_URL configured; confirms the
+   clear-error path end-to-end without touching a network or database)
+```
+
+`python -m competitive_memory.main` was deliberately **not** run for real:
+with no `DATABASE_URL` configured, it would still make a real (paid,
+credit-charging) ScrapeCreators call before failing at the database step —
+spending a credit to prove nothing. The missing-`DATABASE_URL` path is
+already fully verified via the migration command above and via unit tests.
+
+## Test results
+
+**67 tests total, all passing** (up from 45 at the start of this
+milestone): the original 45, 7 new for the Sequence A preflight fix
+(top-level list/string/number/null, missing `results`, non-list `results`,
+valid empty `results: []`), and 15 new for Sequence C persistence,
+covering every one of the 16 required cases in the brief — the 4 above
+plus: missing `DATABASE_URL`; new ad inserted; repeated ad updated not
+duplicated; `first_seen_at` preserved; `last_seen_at` changes; `times_seen`
+increments exactly once per run (checked across 3 consecutive runs, not
+just 2); existing `analysis_status` preserved; a null `started_at` doesn't
+erase a real one; a changed signed media URL doesn't trigger rediscovery;
+a simulated mid-batch database failure rolls back and leaves zero trace of
+the failed batch; two separate credential-leak checks (a connection
+failure and a query failure, both confirmed to never contain a
+placeholder secret or DSN); and a service-level test confirming
+`ready_for_analysis` contains only the truly-new ad from a mixed batch,
+using Sequence A's own `media_url` key rather than the database's
+`latest_media_url` column name.
+
+The Sequence C tests use a purpose-built in-memory `FakeConnection` that
+implements the *exact* semantics of `db.py`'s three fixed SQL statements
+(not a generic SQL engine) — buffering writes until a simulated `commit()`
+so a simulated failure can prove `rollback()` really discards them. No
+live database, no live ScrapeCreators request, no credits, no network
+access anywhere in the standard test run.
+
+## Neon verification status: PARTIALLY LIVE-VERIFIED (migration + smoke test yes, full pipeline no)
+
+A real `DATABASE_URL` was provided later in this session (a Neon project
+that turned out to already contain one unrelated table, `hermes_runs`, 28
+rows — from a different project, the Hermes trading agent, not this repo.
+Confirmed with the user before touching it, given the description
+("previous rendition") didn't match what was actually found; user
+explicitly confirmed dropping it).
+
+**What was actually run against the real database, in order:**
+
+1. Connected and listed tables: found only `hermes_runs` (28 rows) — did
+   **not** assume this matched the brief's "previous rendition" framing
+   and surfaced the mismatch before acting.
+2. On explicit user confirmation: `DROP TABLE IF EXISTS hermes_runs` —
+   the **only** destructive statement run this session, against the one
+   table confirmed with the user by name.
+3. `cd src && python -m competitive_memory.migrate` — real run, exit 0,
+   printed `migration applied: competitor_ads table is ready.`
+4. Verified via `information_schema` that `competitor_ads` is now the
+   **only** table in the database, with all 16 columns, types, nullability,
+   and defaults matching the migration file exactly (checked column by
+   column, not just "table exists").
+5. Real smoke test: inserted `ad_id = '__sequence_c_smoke_test__'`,
+   selected it back (confirmed `times_seen=1`, `analysis_status='pending'`,
+   `first_seen_at == last_seen_at` — the exact insert-path defaults the
+   brief specifies), deleted only that exact row, then confirmed via
+   `COUNT(*)` that the table was back to 0 rows. **Migration and smoke
+   test are genuinely live-verified**, not fixture-only.
+6. Attempted one real end-to-end run: `cd src && python -m
+   competitive_memory.main`. **This spent 1 real ScrapeCreators credit**
+   (the fetch step runs before the database step) but then failed at
+   `db.connect()` with `OperationalError` — the CLI's own error handling
+   worked correctly (clear stderr message, exit 1, no credential leaked),
+   but **no ads were persisted and no `ready_for_analysis` output was
+   produced** for that run.
+7. To isolate the cause, ran a bare connection attempt (no ScrapeCreators
+   call, no additional credit) immediately after: it succeeded
+   (`connected OK`). Every other connection this session (steps 1, 3, 5)
+   also succeeded. This strongly suggests step 6's failure was transient
+   connection flakiness from this sandbox to Neon (connections in this
+   session ranged from ~2 minutes to noticeably longer, never instant),
+   **not** a code, schema, or credential defect — but this is an inference
+   from consistent evidence, not a confirmed root cause, and it is not the
+   same thing as a successful end-to-end run.
+
+**What this means concretely: the full "fetch → persist → report" pipeline
+has not yet been successfully demonstrated against the real database in
+one run.** Migration and direct SQL operations against Neon are
+proven working; `competitive_memory.main`'s happy path is not yet proven
+working live, only via the 67 offline tests plus code review.
+
+## Live ScrapeCreators verification status: ATTEMPTED, 1 CREDIT SPENT, RESULT INCONCLUSIVE
+
+One real ScrapeCreators call was made as part of step 6 above. The fetch
+itself likely succeeded (Sequence A's own fetch code is unchanged and
+separately live-verified in its own milestone) but its result was never
+observed, because the process failed at the database step immediately
+after and the CLI does not log intermediate fetch results — by design, it
+only ever prints the final JSON or an error, never partial state. So: one
+credit was spent, but there is no sanitized fetched-ad output to show for
+it from this attempt. Sequence A's original live-fetch verification (from
+its own milestone) is unaffected by the preflight fix in this milestone.
+
+## Sanitized real output
+
+None available yet — the one real end-to-end attempt (see above) did not
+reach the point of producing output. See "Test results" above for the
+fixture/fake-verified shape of what a successful run produces, and see the
+real, verified smoke-test row values in step 5 above (`times_seen=1`,
+`analysis_status='pending'`, `first_seen_at == last_seen_at`) for confirmed
+real database behavior on that narrower slice.
+
+## Known limitations
+
+- **The full fetch→persist pipeline is not yet proven end-to-end against
+  the real database** — see "Neon verification status" above. This is the
+  single most important open item.
+- Direct SQL operations (migration, insert, select, delete) against Neon
+  are proven working. The `upsert_ads()` INSERT/UPDATE SQL specifically
+  has *not* been exercised against real data yet — only the simpler
+  smoke-test INSERT was, and only the fake connection has exercised the
+  UPDATE statement's exact text.
+- Connections to this specific Neon project from this sandbox are slow
+  (roughly 2+ minutes each) and were unreliable at least once — a
+  production/scheduled caller should expect to need a generous timeout
+  and should not assume a single connection attempt will always succeed
+  quickly.
+- No index beyond the primary key (`ad_id`) was added — not needed at
+  ~20 rows per run and no query pattern yet justifies one.
+- `hermes_runs` (28 rows, unrelated Hermes trading agent data) was
+  permanently deleted from this Neon project this session, with explicit
+  user confirmation after the mismatch with the brief's description was
+  surfaced. That data is not recoverable from this repo.
+
+## Working tree
+
+Not committed as of the point Neon verification above concluded. Commit
+and push happened afterward, once explicitly requested — see the current
+`git log`/`git status` for the authoritative state; this file is not
+updated retroactively every time something is committed.
+
+## Exact next recommended milestone
+
+Migration and direct-SQL verification against the real Neon database are
+done (see "Neon verification status" above). Three items remain:
+
+1. **Get one successful real end-to-end `competitive_memory.main` run.**
+   The last attempt spent 1 credit and failed at `db.connect()` with a
+   transient-looking error; a bare connection retried successfully right
+   after. Next attempt: run `cd src && python -m competitive_memory.main`
+   again, expect it may need a generous timeout (observed connections to
+   this Neon project ranged from ~2 minutes up), and this time capture the
+   actual JSON output. If it fails at the DB step again with the same
+   error pattern, that's worth investigating as a real issue rather than
+   assuming flakiness a second time.
+2. Once step 1 succeeds once, **run it a second time** (only if the extra
+   credit cost is acceptable) to confirm idempotent upsert behavior for
+   real: `inserted_count: 0` and the same ads reported under
+   `updated_count` rather than duplicated rows.
+3. **The actual next *build* milestone** (separate from verification):
+   design the AI-analysis schema from real Gemini trials against a handful
+   of `ready_for_analysis` ads, store it in a new column only after that
+   schema is validated (not guessed in advance, per the brief) —
+   explicitly not started, not scoped further than that here.
+
+The ads↔organic-post matching audit (previously reserved as "Sequence C"
+before this milestone claimed that name) remains a separate, later,
+optional option — still just the one sentence describing it, above.
