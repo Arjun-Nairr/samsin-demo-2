@@ -2,7 +2,46 @@
 
 ## Current status (read this first)
 
-- **Sequence E** (`samsin_reference`, `creative_generation`,
+- **Competitor replaced: PacSun → Billionaire Boys Club Icecream.** PacSun
+  was confirmed twice, live, to have ~0 usable static image/meme ads (see
+  Sequence E, Part 1 below) - it has now actually been replaced, not just
+  flagged. New competitor: `page_id 142427132456114`, Instagram handle
+  `bbcicecream`, verified via a live diagnostic fetch that found 16 usable
+  active US static-image ads. Changed in one place -
+  `src/ad_fetcher/config.py`'s `COMPETITOR` dict - and
+  `src/organic_fetcher/config.py`'s `ACCOUNT_HANDLE`/`BRAND_LABEL` (the
+  Instagram handle was **not** independently re-verified via
+  company-search this session, same caveat PacSun's handle originally
+  had). All 155 offline tests still pass unchanged - `competitive_memory`
+  scopes everything off `ad_fetcher.config.COMPETITOR` already, so no
+  other file needed a code change. Live-verified: one real
+  `competitive_memory.main` run (1 ScrapeCreators credit) fetched 16 ads,
+  inserted 16 new rows into Neon, all with `page_id = 142427132456114`,
+  all `media_type = image` with a usable `latest_media_url`, all
+  `analysis_status = pending`. One of those 16 (`ad_id
+  2360284104778799`) had an explicitly-artificial test analysis
+  (`__synthetic_test_analysis__: true`) saved via `analysis_cli save` to
+  smoke-test the persistence boundary, its real ranked-context payload
+  captured via `competitive_memory.ranking` (see "Competitor replacement
+  verification" below for the full payload), then manually reset back to
+  `analysis_status = pending` with `analysis_result`/`analysis_attempts`/
+  `analysis_error`/`analyzed_at` all cleared - confirmed via a direct
+  `SELECT` after the reset. No fake analysis remains in the database.
+  Sequence B (`organic_fetcher`) was **not** re-run live this session -
+  identity updated, not live-verified, consistent with how Sequence B was
+  handled during the PacSun switch in Sequence D.
+- Three inaccuracies in this file, corrected this session: (1) the
+  Aelfric Eden rows were already correctly stated as deleted (not
+  "still exist") as of the prior Sequence E pass - re-checked, no change
+  needed. (2) Sequence D's credit total was already reconciled to 3 in
+  the prior Sequence E pass - re-checked, no change needed. (3) the
+  ranking smoke-test synthetic-row disclosure was already present from
+  the prior Sequence E pass - re-checked, no change needed. (These three
+  corrections were made during Sequence E; this session verified they are
+  still accurate rather than re-doing them.)
+- **Sequence E** (superseded by the entries above for anything
+  competitor-identity-related; the Gemini/ImgBB/Instagram pipeline
+  described below is unaffected by the competitor swap) (`samsin_reference`, `creative_generation`,
   `manual_publishing`) — **implemented, 30 tests offline, fully
   live-verified end to end**: real Samsin catalog fetch → 2 real Gemini
   candidates → human picks one → real ImgBB upload → real Instagram
@@ -1961,6 +2000,185 @@ everything built so far, OpenClaw's job will be to:
    reliability fix - once a schedule exists, OpenClaw is the natural place
    to serialize scheduled vs. manual runs.
 
-Before any of that: **replace PacSun** as the configured competitor (Part
-1, above) - every downstream step from Sequence C onward currently has
-nothing real to work with.
+**(superseded)** This used to say "before any of that, replace PacSun" -
+that's now done, see "Competitor Replacement — PacSun → Billionaire Boys
+Club Icecream" below. Steps 1-7 above are otherwise still accurate and
+still not built.
+
+---
+
+# Competitor Replacement — PacSun → Billionaire Boys Club Icecream
+
+## Why
+
+PacSun was confirmed twice, live, across two separate sessions (Sequence
+D's original live verification, then Sequence E Part 1's wider-window
+diagnostic) to have essentially zero usable static image/meme ads in its
+Meta Ad Library - 100% Dynamic Creative Optimization and video, even with
+`status=ALL` and a 60-day window. Every downstream sequence (C/D) had
+nothing real to persist or analyze. Per explicit instruction, no DCO/DPA
+support was built to work around this - the competitor itself was
+replaced instead.
+
+## New competitor
+
+- Name: **Billionaire Boys Club Icecream**
+- Meta page ID: `142427132456114`
+- Instagram handle: `bbcicecream`
+- Verified via a live diagnostic fetch this session: 16 usable active US
+  static-image ads (see "Live verification" below) - well above any
+  reasonable usability bar, unlike PacSun's 0.
+
+## Files changed (smallest consistent diff, no architecture change)
+
+```
+src/ad_fetcher/config.py         COMPETITOR dict (name, page_id), BRAND_LABEL,
+                                  docstring updated with the replacement rationale
+src/organic_fetcher/config.py    ACCOUNT_HANDLE, BRAND_LABEL, docstring updated -
+                                  flags that the new handle is not yet
+                                  independently re-verified via company-search
+README.md                        competitor description + setup note updated
+HANDOFF.md                       this section, plus the "Current status" note
+                                  at the top
+```
+
+**Nothing else needed to change.** `competitive_memory/config.py`'s
+`ACTIVE_PAGE_ID = COMPETITOR["page_id"]` already derives from
+`ad_fetcher.config.COMPETITOR`, and every query in `competitive_memory/db.py`,
+`analysis.py`, and `ranking.py` scopes by that one value - the scoping
+design from Sequence D did exactly what it was meant to do here: a
+one-competitor swap touched two config files, not the persistence or
+ranking logic. No DCO/DPA support, no multi-competitor registry, no new
+tables, no schema change.
+
+## Offline tests
+
+`python -m unittest discover -s tests -v` → **155 passed, 0 failed**,
+unchanged from before this swap. No test needed updating - the
+`competitive_memory`/`ranking` test suites use their own local fixture
+constants (e.g. `BRAND = "PacSun"`, `PAGE_ID = "7133041744"`-style
+literals in `test_competitive_memory.py` uses `PAGE_ID = "7133041750"`)
+to exercise the generic persistence/ranking contract, not the real
+configured competitor - so they're correctly unaffected by an identity
+change. `test_analysis_and_ranking.py` reads `config.ACTIVE_PAGE_ID`
+directly for its own fixture rows, so it would have picked up the new
+value automatically either way.
+
+## Live verification
+
+One real `python -m competitive_memory.main` run (cwd `src/`), spending
+**1 ScrapeCreators credit**:
+
+```json
+{
+  "fetched_count": 16,
+  "inserted_count": 16,
+  "updated_count": 0,
+  "ready_for_analysis_count": 16
+}
+```
+
+All 16 are real `IMAGE`-format ads for Billionaire Boys Club Icecream
+(bodies like `"ICECREAM Fall '26 now available."` and `"Billionaire Boys
+Club Summer '26 now available."`), `is_active: true`, `started_at`
+ranging June-August 2026. Confirmed directly in Neon via `information_schema`-
+backed queries (not just trusting the CLI's own report):
+
+- `SELECT COUNT(*), COUNT(DISTINCT page_id) FROM competitor_ads` → `(16, 1)`
+- `SELECT page_id, COUNT(*) ... GROUP BY page_id` → `[('142427132456114', 16)]`
+- Spot-checked 5 rows: all `media_type = 'image'`, all with a non-empty
+  `latest_media_url`, all `analysis_status = 'pending'`.
+
+### Analysis-persistence + ranking smoke test (genuine ad this time, not synthetic)
+
+Unlike Sequence D's original ranking smoke test (which used a fabricated
+row because 0 real ads existed at the time), this session had 16 genuine
+pending ads to pick from. Selected `ad_id = 2360284104778799` (real ad:
+`"Billionaire Boys Club Summer '26 now available."`, `started_at
+2026-07-02`).
+
+Saved an **explicitly artificial** test analysis via `analysis_cli save`:
+
+```json
+{
+  "__synthetic_test_analysis__": true,
+  "note": "artificial test payload written by an operator to smoke-test the analysis-persistence boundary and ranking - not a genuine AI analysis of this ad",
+  "sentiment": "n/a",
+  "test_marker": true
+}
+```
+
+Real ranked-context payload from `competitive_memory.ranking` (real
+arithmetic, against the real database, over a real ad - only the
+*analysis content* is synthetic):
+
+```json
+{
+  "count": 1,
+  "context": [
+    {
+      "ad_id": "2360284104778799",
+      "brand": "Billionaire Boys Club Icecream",
+      "body": "Billionaire Boys Club Summer '26 now available.",
+      "headline": "Billionaire Boys Club Summer '26",
+      "cta": "Shop now",
+      "media_type": "image",
+      "snapshot_url": "https://www.facebook.com/ads/library/?id=2360284104778799",
+      "analysis_result": {
+        "note": "artificial test payload written by an operator to smoke-test the analysis-persistence boundary and ranking - not a genuine AI analysis of this ad",
+        "sentiment": "n/a",
+        "test_marker": true,
+        "__synthetic_test_analysis__": true
+      },
+      "weight": 0.2624,
+      "component_scores": { "recency": 0.0, "longevity": 0.8746, "recurrence": 0.0 }
+    }
+  ]
+}
+```
+
+(`media_url` truncated here for brevity - present and real in the actual
+output.) `recency = 0.0` because the ad's `started_at` (2026-07-02) is
+outside the 30-day `RECENCY_WINDOW_DAYS`; `longevity = 0.8746` because
+it's been observed continuously since `first_seen_at`; `recurrence = 0.0`
+because `collation_count` is `null` (ScrapeCreators didn't return
+collation evidence for this ad) - all consistent with `ranking.py`'s
+documented proxy semantics, not a bug.
+
+**Cleanup**: manually reset that row afterward via a direct `UPDATE
+competitor_ads SET analysis_status='pending', analysis_result=NULL,
+analysis_attempts=0, analysis_error=NULL, analyzed_at=NULL WHERE ad_id=...`,
+then confirmed via a `SELECT` that the row is back to `('2360284104778799',
+'pending', None, 0, None)`. **No fake analysis remains in the database.**
+
+## Credits spent this session
+
+1 ScrapeCreators credit (the one `competitive_memory.main` run above). No
+Gemini, ImgBB, or Instagram calls were made - explicitly out of scope for
+this milestone.
+
+## Known limitations / remaining work
+
+- The Instagram handle `bbcicecream` was **not** independently
+  re-verified via ScrapeCreators' company-search endpoint this session
+  (unlike PacSun's original page_id, which was cross-checked against
+  `facebook.com/pacsun` / `instagram.com/pacsun`) - it was taken directly
+  from the brief. Sequence B (`organic_fetcher`) was not re-run live to
+  confirm the handle resolves to real posts.
+- Sequence D's other ranking constants (`RECENCY_WINDOW_DAYS`,
+  `LONGEVITY_WINDOW_DAYS`, `RECURRENCE_CAP`, weights) were not
+  re-evaluated for this new competitor's posting cadence - they're
+  unchanged from Sequence D's PacSun-era tuning and may not be ideal here,
+  but that's a tuning question, not a defect, and out of scope for this
+  milestone.
+- The other 15 real pending ads are untouched (still genuinely `pending`)
+  - ready for a real analysis step (Sequence F/OpenClaw) whenever that's
+    built.
+- Gemini/ImgBB/Instagram (Sequence E's pipeline) and OpenClaw (Sequence F)
+  are both unaffected by this swap and remain exactly as documented in
+  their own sections above.
+
+## Git status
+
+Committed and pushed once verification above succeeded - see `git log`/
+`git status` for the authoritative current state.

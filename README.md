@@ -5,13 +5,14 @@ Six small, mostly-independent pieces spanning competitor intelligence
 ImgBB + Instagram):
 
 - **Sequence A** (`ad_fetcher`): paid Meta/Facebook ad-library ads for one
-  hardcoded, verified competitor (currently **PacSun**, `page_id`
-  `7133041750`) — static images/memes only, US only. **Note**: PacSun's
-  live catalog currently has ~0 static image/meme ads even with a wide
-  `status=ALL` + 60-day window (their current mix is Dynamic Creative
-  Optimization and video) — see "Known limitations" in `HANDOFF.md`.
+  hardcoded, verified competitor (currently **Billionaire Boys Club
+  Icecream**, `page_id` `142427132456114`) — static images/memes only, US
+  only. **Note**: this replaced PacSun, whose live catalog had ~0 static
+  image/meme ads even with a wide `status=ALL` + 60-day window (their mix
+  was 100% Dynamic Creative Optimization and video) — see "Known
+  limitations" in `HANDOFF.md`.
 - **Sequence B** (`organic_fetcher`): public organic Instagram posts/reels
-  for the same competitor's verified handle (`pacsun`).
+  for the same competitor's handle (`bbcicecream`).
 - **Sequence C** (`competitive_memory`): runs Sequence A's fetch, then
   persists/upserts the normalized ads into a `competitor_ads` table in
   Neon PostgreSQL, and reports which ads are newly discovered this run —
@@ -71,13 +72,15 @@ for design history and what's deferred.
 The one competitor is configured in one place:
 [`src/ad_fetcher/config.py`](src/ad_fetcher/config.py) — the `COMPETITOR`
 dict (`name` + verified `page_id`). Every other sequence reuses this; there
-is no second place a competitor is named. The current value (PacSun,
-`page_id` `7133041750`) was verified via ScrapeCreators' company-search
-endpoint before being locked in — see the comment above `COMPETITOR` in
-that file for exactly how.
+is no second place a competitor is named. The current value (Billionaire
+Boys Club Icecream, `page_id` `142427132456114`) was verified via a live
+diagnostic fetch that found 16 usable active US static-image ads — see the
+comment above `COMPETITOR` in that file.
 
-The one Instagram account for Sequence B (verified handle `pacsun`) is
-configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py).
+The one Instagram account for Sequence B (handle `bbcicecream`) is
+configured in [`src/organic_fetcher/config.py`](src/organic_fetcher/config.py) —
+not independently re-verified via company-search this session, see the
+comment in that file.
 
 ## Run tests
 
