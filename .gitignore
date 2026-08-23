@@ -1,3 +1,5 @@
 .env
 __pycache__/
 *.pyc
+generated_creatives/
+.manual_publish_state.json

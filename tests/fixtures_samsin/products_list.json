@@ -1,0 +1,36 @@
+{
+  "products": [
+    {
+      "title": "STAR T-SHIRT WHITE",
+      "handle": "star-t-shirt-radiostar",
+      "product_type": "Star T-Shirt",
+      "images": [
+        { "src": "https://cdn.shopify.com/s/files/1/star-front.jpg", "alt": null },
+        { "src": "https://cdn.shopify.com/s/files/1/star-back.jpg", "alt": null },
+        { "src": "https://cdn.shopify.com/s/files/1/star-model.jpg", "alt": "model wearing star tee" }
+      ]
+    },
+    {
+      "title": "CAMO T-SHIRT",
+      "handle": "camo-t-shirt",
+      "product_type": "T-Shirt",
+      "images": [
+        { "src": "https://cdn.shopify.com/s/files/1/camo-front.jpg", "alt": "camo" }
+      ]
+    },
+    {
+      "title": "OVERSIZED HOODIE",
+      "handle": "oversized-hoodie",
+      "product_type": "Hoodie",
+      "images": [
+        { "src": "https://cdn.shopify.com/s/files/1/hoodie.jpg", "alt": null }
+      ]
+    },
+    {
+      "title": "NO IMAGE TEE",
+      "handle": "no-image-tee",
+      "product_type": "T-Shirt",
+      "images": []
+    }
+  ]
+}

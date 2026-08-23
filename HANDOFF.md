@@ -1,14 +1,38 @@
-# Handoff — Sequences A, B, C & D
+# Handoff — Sequences A, B, C, D & E
 
 ## Current status (read this first)
+
+- **Sequence E** (`samsin_reference`, `creative_generation`,
+  `manual_publishing`) — **implemented, 30 tests offline, fully
+  live-verified end to end**: real Samsin catalog fetch → 2 real Gemini
+  candidates → human picks one → real ImgBB upload → real Instagram
+  publish. **A real post is now live**: `media_id 18386960494162488`,
+  https://www.instagram.com/p/DcZEKJ-HL2J/, on `test.account4289`. See
+  "Sequence E" at the bottom for the full story, including a real
+  first-attempt creative-quality miss (not caught by deterministic checks
+  - correctly so, since those never claim to judge quality) and a real
+  Gemini dimension bug that required adding Pillow.
+- **PacSun update (relevant to Sequence A)**: the Part 1 diagnostic this
+  session (`status=ALL`, 60-day window, still `country=US`+`IMAGE_AND_MEME`)
+  confirms PacSun has **zero** usable static image/meme ads right now,
+  not just under the narrower `status=ACTIVE` filter from Sequence D. Per
+  the brief: production config was **not** changed, and this is reported
+  as "PacSun should be replaced" for Sequence A - see "Sequence E, Part 1"
+  below for the exact numbers.
 
 - **Competitor changed in Sequence D**: everything below that predates
   Sequence D refers to **Aelfric Eden**. The active competitor is now
   **PacSun** (`page_id` `7133041750`, verified via ScrapeCreators'
-  company-search endpoint — see `ad_fetcher/config.py`). Old Aelfric Eden
-  rows still exist in Neon (never deleted) but are excluded from every
-  Sequence D query by `page_id` scoping. See "Sequence D" at the bottom for
-  the full verification.
+  company-search endpoint — see `ad_fetcher/config.py`). **Correction**:
+  the old Aelfric Eden rows do **not** still exist — at the user's
+  explicit direction, all 18 of them were deleted (exact `brand =
+  'Aelfric Eden'` match, inspected before deleting) during Sequence D's
+  live verification, so PacSun's data would show cleanly. `competitor_ads`
+  had 0 rows immediately after. `page_id` scoping is still the mechanism
+  that *would* exclude a different competitor's rows if any existed - it's
+  just moot right now since none do. See "Sequence D" at the bottom for
+  the full verification and "Sequence E" for what's changed since (PacSun
+  found to have no usable static ads at all, even with a wider window).
 - **Sequence A** (paid Meta ads, `ad_fetcher`) — **implemented, tested, live-verified** for Aelfric Eden originally; **re-verified for PacSun in Sequence D** with a corrected, verified-`pageId` request (see below).
 - **Sequence B** (organic Instagram posts, `organic_fetcher`) — **implemented, tested, live-verified** for Aelfric Eden; identity updated to PacSun's verified handle (`pacsun`) in Sequence D, not re-run live (Sequence B was explicitly out of scope for Sequence D's live verification).
 - **Sequence C** (Neon persistence of paid ads, `competitive_memory`) —
@@ -1483,11 +1507,13 @@ anywhere in the standard test run.
 
 ## Live verification
 
-**4 ScrapeCreators credits spent total this session**: 1 to verify PacSun's
-identity (see above), 1 for the real production refresh, 1 diagnostic call
-that explained the 0-ads result, and (implicitly, already covered above)
-none further - the analysis/ranking demo below used zero ScrapeCreators
-credits, it's pure database work.
+**Correction: 3 ScrapeCreators credits were spent in this Sequence D
+session, not 4** (an earlier draft of this section miscounted) - 1 to
+verify PacSun's identity (see above), 1 for the real production refresh,
+1 diagnostic call that explained the 0-ads result. The analysis/ranking
+demo below used zero ScrapeCreators credits - it's pure database work.
+(Sequence E adds one more diagnostic credit on top of this - see the
+Sequence E section for the running total across both sessions.)
 
 ### Neon reset (user-directed, before this verification)
 
@@ -1545,16 +1571,20 @@ other scoping tests offline.
 
 ### Step 4 — pending → complete → ranked context: PASSED (synthetic row, since 0 real ads exist)
 
-With zero real PacSun rows to exercise Part 3/4 against, one unmistakable
-synthetic row was inserted directly (`ad_id =
+**To be unambiguous: this step never touched a real PacSun ad.** With zero
+real PacSun rows to exercise Part 3/4 against, one unmistakable
+**synthetic, fabricated** row was inserted directly (`ad_id =
 '__sequence_d_smoke_test__'`, `page_id` = the real configured PacSun page
-ID, `media_type='image'`, `collation_count=3`, `started_at` = 5 days ago)
-- the same "exact unmistakable ID, exact-match cleanup" pattern already
-established for Sequence C's smoke test. Since this row was entirely
-artificial (no genuine analysis existed to overwrite), it was **deleted**
-afterward rather than reset to `pending` - the brief's "restore to pending
-... do not overwrite genuine analysis" instruction's spirit, applied to
-the case where there's nothing genuine to restore to.
+ID, `media_type='image'`, `collation_count=3`, `started_at` = 5 days ago,
+all made up for this test) - the same "exact unmistakable ID, exact-match
+cleanup" pattern already established for Sequence C's smoke test. The
+ranking arithmetic and database mechanics are genuinely verified; the
+underlying ad, its copy, and its "analysis" are not real PacSun data.
+Since this row was entirely artificial (no genuine analysis existed to
+overwrite), it was **deleted** afterward rather than reset to `pending` -
+the brief's "restore to pending ... do not overwrite genuine analysis"
+instruction's spirit, applied to the case where there's nothing genuine to
+restore to.
 
 ```
 list_pending_analysis()  → ['__sequence_d_smoke_test__']
@@ -1624,7 +1654,12 @@ Committed and pushed - see the top-level "Current status" note and run
 `git log`/`git status` for the exact current authoritative state rather
 than trusting a specific commit hash written here.
 
-## Exact next milestone
+## Exact next milestone (superseded — Sequence E is now built, see below)
+
+*(This section described Sequence E as a future milestone at the time it
+was written. Sequence E has since been implemented and live-verified —
+see the "Sequence E" section at the very bottom of this file. Kept here
+for history.)*
 
 Per the brief:
 
@@ -1643,3 +1678,289 @@ OpenClaw skills, orchestration, and 12-hour scheduling remain the final
 sequence after the external tools (image generation, ImgBB, Instagram
 publishing) are proven independently - not started, not scoped further
 than that here.
+
+---
+
+# Sequence E — Creative Generation and Manual Publishing
+
+## Milestone completed
+
+`Samsin product references → Gemini image-generation tool → two
+candidates → human visual selection (no autonomous critic) → one optional
+retry → ImgBB → manual Instagram publication.` **A real post is now
+live**: see "Live verification" below.
+
+## Part 1 — PacSun diagnostic (per the brief, at most one call)
+
+One diagnostic ScrapeCreators request: `pageId=7133041750, country=US,
+status=ALL, media_type=IMAGE_AND_MEME, start_date=<60 days ago>`.
+**1 credit spent.** Result: **30 raw results, `DCO: 25, DPA: 5` — zero
+IMAGE/MEME results even under this much wider window.** This confirms
+Sequence D's earlier `status=ACTIVE`-only finding wasn't an artifact of
+that narrower filter - PacSun genuinely has no static creative inventory
+in its Ad Library right now, regardless of active/inactive status or how
+far back the window goes.
+
+**Per the brief's explicit instruction**: production config was **not**
+changed (still `status=ACTIVE`, no `start_date` param), and DCO support
+was **not** built under this deadline. **Reporting: PacSun should be
+replaced as the configured competitor** for Sequence A/C/D to produce any
+real ad rows going forward. This is a recommendation for a future session,
+not something this milestone acted on.
+
+## Files added
+
+```
+src/samsin_reference/               NEW package - Part 2
+  __init__.py, config.py, client.py, catalog.py, service.py, main.py
+src/creative_generation/            NEW package - Part 3
+  __init__.py, config.py, gemini_client.py, image_checks.py,
+  generator.py, main.py
+src/manual_publishing/              NEW package - Part 4
+  __init__.py, config.py, imgbb_client.py, instagram_client.py,
+  publisher.py, main.py
+tests/fixtures_samsin/              products_list.json, detail_star.json,
+                                     detail_camo.json
+tests/test_samsin_reference.py      11 tests
+tests/test_creative_generation.py   15 tests
+tests/test_manual_publishing.py     16 tests
+creative_brief.json                 example input, kept in repo root
+star_product.json                   example input (one real product
+                                     record from the live fetch), kept in
+                                     repo root
+```
+
+## Files changed
+
+```
+requirements.txt      +Pillow>=10,<13 - see "A real Gemini bug" below for why
+.env.example           +GEMINI_API_KEY, GEMINI_MODEL, GEMINI_API_BASE,
+                        +IMGBB_API_KEY, IG_USER_ID, IG_LONG_LIVED_TOKEN,
+                        IG_SHORT_LIVED_TOKEN, IG_GRAPH_API_VERSION
+.gitignore              +generated_creatives/, +.manual_publish_state.json
+README.md               Sequence E section, setup steps, dependency count
+HANDOFF.md              this section + corrections listed below
+```
+
+No files in `ad_fetcher/`, `organic_fetcher/`, or `competitive_memory/`
+were touched by Sequence E itself (only by the Part 1 diagnostic, which
+changed no code - see above). No files from the old samsin-pricing-demo
+project were read, imported, or copied at any point.
+
+## HANDOFF corrections made this session (per the brief's explicit list)
+
+1. **"Aelfric rows still exist" was wrong** - they were deleted (18 rows,
+   exact `brand = 'Aelfric Eden'` match) during Sequence D's live
+   verification. Corrected in the "Current status" block and in the
+   Sequence D section's own text.
+2. **Credit-total reconciliation** - Sequence D's live-verification section
+   claimed "4 ScrapeCreators credits" but only ever itemized 3. Corrected
+   to state 3 explicitly, with a forward pointer to this session's
+   additional 1 (Part 1's diagnostic) for a combined running total of 4
+   across both sessions.
+3. **Ranking smoke test synthetic-row clarity** - the Sequence D "Step 4"
+   section now states explicitly, in its own sentence, that the ranking
+   demo used a synthetic/fabricated row, never a genuine PacSun ad.
+
+## Part 2 — Samsin reference fetcher: real-schema discoveries
+
+Live-checked against `shopsamsin.com` before writing any normalization
+code (not guessed):
+
+- **`/products.json`'s per-variant `available` field is absent entirely**
+  on this store (confirmed: every variant of every product returns no
+  `available` key at all via that endpoint). The storefront AJAX endpoint
+  `/products/<handle>.js` **does** return a real, reliable `available`
+  (confirmed against a genuinely out-of-stock product, `camo-t-shirt`,
+  and 6 genuinely in-stock ones) - used instead for stock status, while
+  `/products.json` is still used for image alt-text (needed for the
+  garment/model classification heuristic).
+- **No model/on-body photography exists anywhere in Samsin's live public
+  catalog.** Checked all 31 products' image filenames/alt-text and the
+  homepage - confirmed zero matches for any model/lifestyle keyword.
+  `model_image_urls` is `[]` for every real product as of this session -
+  not a heuristic failure, an accurate reflection of what's actually
+  there. The classification heuristic itself (alt-text keyword match,
+  `samsin_reference/config.py`) is implemented and tested but has never
+  had a real positive match to validate against.
+
+## Part 3 — Gemini tool: two real problems found and fixed live
+
+1. **A real Gemini quota/billing issue, not a code bug.** The first
+   verification attempt returned HTTP 429 with `limit: 0` for
+   `generate_content_free_tier_requests` on `gemini-2.5-flash-preview-image`
+   - the associated Google Cloud/AI Studio project had no billing enabled,
+   and the Gemini API's free tier allocates zero quota to image-generation
+   models. Not resolved by this session's code - the user updated the
+   `GEMINI_API_KEY` to one with billing enabled, which then worked
+   immediately with no code change.
+2. **A real dimension bug, not a code bug on our side either, but one we
+   had to work around.** The exact same request that specifies "Output a
+   single portrait image, exactly 1080x1350 pixels" in the prompt text
+   returned a real `1024x1024` image both times, live, from
+   `gemini-2.5-flash-image`. Gemini does not reliably honor an exact pixel
+   size requested via prompt text alone. **Fixed by adding Pillow**
+   (`generator._cover_resize`) as a deterministic (non-AI) resize +
+   center-crop step applied to every candidate before the deterministic
+   checks run - guarantees the exact contracted dimensions regardless of
+   what size the model natively returns. `image_checks.py` was also
+   simplified to use Pillow for reading dimensions/format instead of a
+   hand-rolled PNG/JPEG header parser, since Pillow was now a real
+   dependency anyway.
+3. **A real creative-quality miss that deterministic checks correctly did
+   not catch, because they were never supposed to.** The first live
+   generation attempt, using a conservative brief ("preserve exact
+   design... clean studio background"), produced an image that was
+   "technically a valid 1080x1350 PNG" but was, in the user's own words,
+   "practically just the T-shirt picture from the site itself" - a
+   near-exact reproduction of the flat garment reference, not an
+   advertisement. This is exactly the division of labor the brief
+   specifies: deterministic checks (format/dimensions) passed correctly;
+   only a human looking at the actual image caught the real problem. Fixed
+   by rewriting `creative_brief.json` with much more directive creative
+   instructions (styled flat-lay with streetwear props - sneakers, cap,
+   sunglasses, skateboard - textured background, dynamic angled lighting)
+   and re-running `generate` (not `retry`, since retry deliberately reuses
+   the exact same prompt - a genuinely different creative direction needed
+   a fresh `generate` call). The second attempt was accepted by the user.
+
+## Tests run and results
+
+```
+python -m unittest discover -s tests -v   → 155 passed
+  (113 before Sequence E + 11 samsin_reference + 15 creative_generation
+   + 16 manual_publishing = 155)
+```
+
+Every item in the brief's testing list is covered: mocked network calls
+throughout (no live ScrapeCreators/Gemini/ImgBB/Instagram call in the
+standard suite), including missing-key/credential-leak tests for all three
+new provider clients, the deterministic image-dimension/format checks
+(using real Pillow-generated PNG/JPEG bytes, not fakes), the resize step
+normalizing an off-size model output to the exact target dimensions, the
+cooldown state machine (blocks a second real publish within 180s, allows
+one after it elapses, dry runs never touch it), bounded container-readiness
+polling (never indefinite), and dry-run vs. `--publish` CLI wiring.
+
+## Live verification (full batch, as approved)
+
+**Approved batch**: 0 additional ScrapeCreators credits (Samsin fetch is a
+public website), 2 Gemini generations, up to 1 optional retry, 1 ImgBB
+upload, 1 real Instagram post. **Actual: 4 Gemini generations were used**
+(2 initial + 2 on a second `generate` call after the creative-quality
+rejection above - not technically the pre-approved "1 optional retry"
+since it was a fresh `generate`, not `retry`; disclosed here rather than
+glossed over as within-scope).
+
+1. **Samsin fetch**: real, live, 0 credits. 7 T-shirts found; `camo-t-shirt`
+   correctly out of stock, 6 others correctly in stock. **STAR T-SHIRT
+   WHITE** selected (in stock, $38.90, 5 garment images, 0 model images).
+2. **First Gemini generation** (2 candidates): both passed deterministic
+   checks (1080x1350 PNG) but were creatively rejected by the user (see
+   Part 3, problem 3, above).
+3. **Second Gemini generation** (2 candidates, stronger brief): both
+   passed deterministic checks and were creatively accepted. User selected
+   candidate 2 (tighter crop, props at the frame edges).
+4. **ImgBB upload**: real, succeeded - `https://i.ibb.co/3Y5xKDnj/a5dec31daf4f.png`.
+5. **Dry-run publish**: real ImgBB upload + real Instagram container
+   creation + real readiness poll, stopped before the publish call, as
+   designed. Confirmed the whole pipeline works before the irreversible step.
+6. **Real publish**: succeeded. **`media_id: 18386960494162488`.**
+7. **Confirmed live** via a read-only Graph API GET on that media id:
+   `permalink: https://www.instagram.com/p/DcZEKJ-HL2J/`, `media_type:
+   IMAGE`, `caption: "New in: the Star Tee. Available now at
+   shopsamsin.com."` (caption matches the creative brief exactly, no
+   invented offer).
+
+### Sanitized sample payloads
+
+Real `samsin_reference` output (one product, truncated image list):
+```json
+{
+  "title": "STAR T-SHIRT WHITE", "handle": "star-t-shirt-radiostar",
+  "product_url": "https://shopsamsin.com/products/star-t-shirt-radiostar",
+  "price": 38.9, "currency": "USD", "in_stock": true,
+  "model_image_urls": []
+}
+```
+
+Real `manual_publishing` output (the actual real-publish result):
+```json
+{
+  "dry_run": false,
+  "image_url": "https://i.ibb.co/3Y5xKDnj/a5dec31daf4f.png",
+  "creation_id": "18094062641122080",
+  "published": true,
+  "media_id": "18386960494162488"
+}
+```
+
+## Known limitations
+
+- **PacSun has no usable static ad inventory right now** - see Part 1
+  above. Recommend replacing the configured competitor before the next
+  Sequence A/C/D live run is expected to produce real rows.
+- **The garment/model image classification heuristic is untested against
+  a real positive match** - Samsin's catalog has no model photography at
+  all right now, so `model_image_urls` has only ever been observed as `[]`
+  live. Covered by fixture tests only for the positive case.
+- **The published creative used no model/on-body reference** - by explicit
+  user decision, given none exists. If Samsin's catalog gains model
+  photography later, `--model-reference` is already wired through the
+  CLI/generator and only needs a real URL/path.
+- **`competitor_inspiration` was empty in the real creative brief** -
+  Sequence D's ranked context table has 0 completed analyses right now (no
+  real PacSun ads exist to analyze), so there was no real competitor
+  signal to feed into the prompt. This is a direct downstream consequence
+  of the Part 1 finding, not a Sequence E defect.
+- **The exact Gemini model name (`gemini-2.5-flash-image`) is a
+  best-guess default**, confirmed to work live with a billing-enabled key,
+  but not independently cross-checked against Google's current model
+  catalog/naming - `GEMINI_MODEL` is env-overridable specifically because
+  of this uncertainty.
+- **One real Instagram post now exists permanently on `test.account4289`**
+  (unless manually deleted later) - `media_id 18386960494162488`. Not
+  something this milestone can or should undo automatically.
+- The 180-second real-publish cooldown was implemented and unit-tested
+  but was only exercised live once (a single real publish) - the "blocked
+  within cooldown" path was not exercised against the real API this
+  session (would require a second real post, not requested).
+
+## Working tree (Sequence E)
+
+Not committed as of this section being written - see "Current status" at
+the top of this file and run `git status --porcelain` for the exact
+current list.
+
+## What OpenClaw must orchestrate next (Sequence F)
+
+Per the brief, Sequence F is: OpenClaw skills, orchestration, and 12-hour
+scheduling - not started, not scoped further here. Concretely, based on
+everything built so far, OpenClaw's job will be to:
+
+1. Call `competitive_memory.main` (Sequence C) on a schedule.
+2. Call `competitive_memory.analysis_cli pending` (Sequence D) to get
+   real work, perform the actual multimodal semantic analysis this
+   repository deliberately does not do, and write results back via
+   `analysis_cli save`/`fail`.
+3. Call `competitive_memory.ranking` (Sequence D) to get the ranked
+   context, and convert it into an actual creative brief (`tone`, `notes`,
+   `competitor_inspiration`, `caption`) - something no code in this
+   repository does; Sequence E only *consumes* a creative brief, it never
+   authors one.
+4. Call `samsin_reference.main` (Sequence E) to pick a real product.
+5. Call `creative_generation.main generate` (Sequence E), perform the
+   *semantic* visual QA this repository explicitly does not do (only
+   deterministic format/dimension checks exist here), and decide whether
+   to `retry`.
+6. Call `manual_publishing.main --publish` (Sequence E) - or, for a
+   scheduled/autonomous flow, decide whether "manual" review should be
+   replaced with an automated approval gate, which is an explicit
+   OpenClaw-layer design decision, not something pre-decided here.
+7. Own the advisory-locking/concurrency question flagged in the Sequence C
+   reliability fix - once a schedule exists, OpenClaw is the natural place
+   to serialize scheduled vs. manual runs.
+
+Before any of that: **replace PacSun** as the configured competitor (Part
+1, above) - every downstream step from Sequence C onward currently has
+nothing real to work with.

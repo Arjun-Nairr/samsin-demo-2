@@ -1,12 +1,15 @@
 # Samsin Ad Intelligence
 
-Four small, mostly-independent pieces against the ScrapeCreators API and
-one Postgres database, building toward an agent-ready competitive
-intelligence tool:
+Six small, mostly-independent pieces spanning competitor intelligence
+(ScrapeCreators + Neon) and Samsin's own creative production (Gemini +
+ImgBB + Instagram):
 
 - **Sequence A** (`ad_fetcher`): paid Meta/Facebook ad-library ads for one
   hardcoded, verified competitor (currently **PacSun**, `page_id`
-  `7133041750`) — static images/memes only, US only.
+  `7133041750`) — static images/memes only, US only. **Note**: PacSun's
+  live catalog currently has ~0 static image/meme ads even with a wide
+  `status=ALL` + 60-day window (their current mix is Dynamic Creative
+  Optimization and video) — see "Known limitations" in `HANDOFF.md`.
 - **Sequence B** (`organic_fetcher`): public organic Instagram posts/reels
   for the same competitor's verified handle (`pacsun`).
 - **Sequence C** (`competitive_memory`): runs Sequence A's fetch, then
@@ -19,10 +22,18 @@ intelligence tool:
   static ads for a future external analysis step (OpenClaw, not built
   here) to read and write results into, plus a deterministic ranked
   "compact context" payload over completed analyses.
+- **Sequence E** (`samsin_reference`, `creative_generation`,
+  `manual_publishing`): fetches Samsin's own real T-shirt catalog from
+  their public storefront, generates Gemini image candidates from a real
+  garment reference, and manually (dry-run by default) publishes a chosen
+  candidate to Instagram. Entirely independent of the paid-ad pipeline
+  above and of the old samsin-pricing-demo project — fresh code throughout.
 
-One provider call each, no pagination, no scheduling, no scoring beyond
-Sequence D's documented V1 weighting proxy, no AI model call anywhere in
-this repository. See `HANDOFF.md` for design history and what's deferred.
+One provider call each (Sequences A-D), no pagination, no scheduling, no
+scoring beyond Sequence D's documented V1 weighting proxy, no autonomous
+visual/creative QA (a human always picks the candidate), no scheduled or
+automatic Instagram posting anywhere in this repository. See `HANDOFF.md`
+for design history and what's deferred.
 
 ## Setup
 
@@ -33,21 +44,29 @@ this repository. See `HANDOFF.md` for design history and what's deferred.
    with `-pooler` in the hostname) — Neon's pooled string is just an
    ordinary PostgreSQL connection string to this app, no special handling
    needed.
-3. Copy `.env.example` to `.env`:
+3. For Sequence E: get a `GEMINI_API_KEY` from https://aistudio.google.com
+   (**billing must be enabled on that project** - the free tier has zero
+   quota for image-generation models, confirmed live), an `IMGBB_API_KEY`
+   from https://api.imgbb.com, and an Instagram Graph API `IG_USER_ID` +
+   access token (`IG_LONG_LIVED_TOKEN` or `IG_SHORT_LIVED_TOKEN`) for the
+   account you want to post to. If you only have the token, you can
+   resolve the numeric `IG_USER_ID` with one read-only call:
+   `GET https://graph.instagram.com/{version}/me?fields=id,username&access_token=<token>`.
+4. Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
-   Then edit `.env` and set `SCRAPECREATORS_API_KEY=<your key>` and (for
-   Sequence C) `DATABASE_URL=<your Neon pooled connection string>`.
-   (Alternatively, set either directly in your shell — an env var, when
-   set, always wins over `.env`.)
-4. Install dependencies:
+   Then edit `.env` and set whichever keys the sequences you're running
+   need (see `.env.example` for the full list). An env var, when set,
+   always wins over `.env`.
+5. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-   This is the one dependency in the whole repo: `psycopg[binary]`, needed
-   only for Sequence C. Sequences A and B still use nothing but the Python
-   standard library.
+   Two dependencies in the whole repo: `psycopg[binary]` (Sequence C) and
+   `Pillow` (Sequence E - needed for a real, deterministic image resize/
+   crop step; see "Sequence E" below for why). Sequences A and B still use
+   nothing but the Python standard library.
 
 The one competitor is configured in one place:
 [`src/ad_fetcher/config.py`](src/ad_fetcher/config.py) — the `COMPETITOR`
@@ -71,11 +90,12 @@ even though they never open a real database connection.
 python -m unittest discover -s tests -v
 ```
 
-Runs Sequence A's, B's, and C's tests together — a regression in one shows
-up when you run the others. (Don't hardcode the count here — it changes
-every time a test is added; run the command above to see the current
-number and confirm `OK`.) None of these tests touch a live database, make
-a live ScrapeCreators request, spend API credits, or need network access —
+Runs every sequence's tests together — a regression in one shows up when
+you run the others. (Don't hardcode the count here — it changes every time
+a test is added; run the command above to see the current number and
+confirm `OK`.) None of these tests touch a live database, make a live
+ScrapeCreators/Gemini/ImgBB/Instagram request, spend API credits, or need
+network access —
 Sequence C's database tests use a small in-memory fake connection.
 
 ## Run Sequence A (paid ads)
@@ -398,6 +418,138 @@ needed.
 
 This does not generate a creative brief — that conversion is OpenClaw's
 job, in a later milestone.
+
+## Sequence E — Creative Generation and Manual Publishing
+
+Three independent pieces, all fresh code with **no dependency on the old
+samsin-pricing-demo project**: `samsin_reference` (fetch), `creative_generation`
+(Gemini), `manual_publishing` (ImgBB + Instagram).
+
+### Fetch Samsin's real T-shirt catalog
+
+```bash
+cd src
+python -m samsin_reference.main
+```
+
+Reads Samsin's live public Shopify storefront directly (`shopsamsin.com`)
+— no credentials, no ScrapeCreators involved. Restricted to T-shirts.
+
+```json
+{
+  "count": 7,
+  "products": [
+    {
+      "title": "STAR T-SHIRT WHITE",
+      "handle": "star-t-shirt-radiostar",
+      "product_url": "https://shopsamsin.com/products/star-t-shirt-radiostar",
+      "price": 38.9,
+      "currency": "USD",
+      "in_stock": true,
+      "garment_image_urls": ["https://cdn.shopify.com/.../StarT-Shirt-Radiostar.jpg"],
+      "model_image_urls": [],
+      "all_image_urls": ["..."]
+    }
+  ]
+}
+```
+
+- **`in_stock`** comes from Shopify's storefront AJAX endpoint
+  (`/products/<handle>.js`), confirmed live to be the reliable source —
+  the public `/products.json` listing endpoint omits `available` entirely
+  on this store. `null` (never `true`) when genuinely unknown.
+- **`model_image_urls` is `[]` for every real product right now.**
+  Confirmed by checking all 31 products' images and the homepage: Samsin's
+  current catalog is pure flat-lay/garment photography, no on-body shots
+  anywhere. Classification is alt-text-keyword-based (best-effort, see
+  `samsin_reference/config.py`) and every image still appears in
+  `all_image_urls` regardless, so nothing is ever silently dropped.
+- Price/availability/products are read directly from the live site, never
+  invented — a product with no usable image is excluded entirely rather
+  than guessed at.
+
+### Generate Gemini image candidates
+
+```bash
+cd src
+python -m creative_generation.main generate \
+    --brief ../creative_brief.json --product ../star_product.json \
+    --garment <garment_image_url_or_local_path>
+    # add --model-reference <path_or_url> if one exists for the product
+```
+
+`creative_brief.json` is loosely typed - whatever's present is used:
+```json
+{
+  "tone": "bold, editorial streetwear advertisement",
+  "notes": "additional creative direction",
+  "competitor_inspiration": "style/mood only - never literal copy",
+  "caption": "used later by manual_publishing, never drawn into the image"
+}
+```
+
+Generates exactly `NUM_CANDIDATES` (default 2) 1080×1350 PNGs plus one
+`manifest.json`, all under `generated_creatives/<handle>_<run_id>/`:
+
+```json
+{
+  "product": {"title": "...", "handle": "...", "product_url": "..."},
+  "prompt": "...",
+  "model": "gemini-2.5-flash-image",
+  "candidates": [
+    {"index": 1, "output_path": "...", "format": "png", "passed_checks": true, "check_error": null}
+  ]
+}
+```
+
+- **A real, live-confirmed finding**: Gemini does not reliably honor an
+  exact pixel size requested via prompt text alone — it returned
+  `1024x1024` for a requested `1080x1350`. A deterministic resize +
+  center-crop step (`generator._cover_resize`, Pillow) now guarantees the
+  exact target dimensions regardless of the model's native output size.
+  This is why Pillow is a real dependency here, not stdlib-only.
+- **Checks are deterministic only** — valid image, correct dimensions,
+  readable format. No semantic/visual judgment of whether the creative is
+  actually good. **A first real attempt with a weak, over-conservative
+  brief produced a near-exact reproduction of the flat garment reference**
+  — technically a "valid 1080x1350 PNG," completely useless as an ad.
+  Deterministic checks cannot and do not catch this; only a human
+  reviewing the actual image caught it, which is exactly the intended
+  division of labor (a human picks the candidate now; OpenClaw does
+  semantic QA later — no autonomous visual critic exists here).
+- **Manual retry** (reuses the *same* saved prompt/references - a real
+  retry, not a new creative direction):
+  ```bash
+  python -m creative_generation.main retry --run-dir <existing run dir>
+  ```
+
+### Manually publish (ImgBB → Instagram)
+
+```bash
+cd src
+python -m manual_publishing.main --image <path> --brief ../creative_brief.json
+# add --publish to actually post (dry-run is the default)
+```
+
+Dry-run uploads to ImgBB and creates+polls the Instagram media container —
+both reversible, nothing has posted — then stops. Only `--publish` calls
+the actual publish endpoint, and only after a **180-second cooldown**
+since the last real publish (tracked in a local, gitignored
+`.manual_publish_state.json` — dry runs never check or touch it).
+
+```json
+{"dry_run": false, "image_url": "https://i.ibb.co/...", "creation_id": "...", "published": true, "media_id": "..."}
+```
+
+- Caption comes verbatim from the creative brief's `"caption"` field —
+  never invents an offer/discount.
+- Container readiness is polled with bounded retries
+  (`CONTAINER_POLL_MAX_ATTEMPTS`/`_DELAY_SECONDS` in `manual_publishing/config.py`)
+  — never indefinite.
+- Credentials and the Graph API version are entirely environment-driven
+  (`IMGBB_API_KEY`, `IG_USER_ID`, `IG_LONG_LIVED_TOKEN`/`IG_SHORT_LIVED_TOKEN`,
+  `IG_GRAPH_API_VERSION`, default `v21.0`) — never printed in any output or
+  error message.
 
 ## Design notes
 
