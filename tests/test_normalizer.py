@@ -18,7 +18,8 @@ from ad_fetcher.scrapecreators_client import (  # noqa: E402
 from ad_fetcher.service import fetch_and_normalize  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
-BRAND = "Aelfric Eden"
+BRAND = "PacSun"
+PAGE_ID = "7133041750"  # verified via company-search, see ad_fetcher/config.py
 
 
 def load(name: str):
@@ -40,12 +41,19 @@ class NormalizeOneAdTests(unittest.TestCase):
         self.assertEqual(
             record["snapshot_url"], "https://www.facebook.com/ads/library/?id=111111111111111"
         )
+        # Sequence D weighting evidence, present in this fixture:
+        self.assertEqual(record["page_id"], "222222222222222")
+        self.assertEqual(record["collation_id"], "333333333333333")
+        self.assertEqual(record["collation_count"], 1)
 
-    def test_valid_video_ad(self):
-        record = normalize_ad(load("video_ad.json"), BRAND)
-        self.assertIsNotNone(record)
-        self.assertEqual(record["media_type"], "video")
-        self.assertEqual(record["media_url"], "https://video.xx.fbcdn.net/ad-video-hd.mp4")
+    def test_video_rejected_under_static_image_only_contract(self):
+        # Sequence D: the paid-ad contract is now static-image-only. Even
+        # a well-formed video ad (valid candidates, real URLs) must be
+        # rejected - not just malformed/URL-less video.
+        self.assertIsNone(normalize_ad(load("video_ad.json"), BRAND))
+
+    def test_dpa_rejected(self):
+        self.assertIsNone(normalize_ad(load("dpa_ad.json"), BRAND))
 
     def test_carousel_uses_first_card_deterministically(self):
         record = normalize_ad(load("carousel_ad.json"), BRAND)
@@ -67,13 +75,6 @@ class NormalizeOneAdTests(unittest.TestCase):
     def test_malformed_record_rejected(self):
         self.assertIsNone(normalize_ad(load("malformed.json"), BRAND))
 
-    def test_video_uses_first_valid_candidate_when_earlier_ones_are_bad(self):
-        record = normalize_ad(load("video_ad_later_candidate.json"), BRAND)
-        self.assertIsNotNone(record)
-        self.assertEqual(
-            record["media_url"], "https://video.xx.fbcdn.net/ad-video-later-candidate-hd.mp4"
-        )
-
     def test_image_uses_first_valid_candidate_when_earlier_ones_are_bad(self):
         record = normalize_ad(load("image_ad_later_candidate.json"), BRAND)
         self.assertIsNotNone(record)
@@ -85,6 +86,15 @@ class NormalizeOneAdTests(unittest.TestCase):
         record = normalize_ad(load("boolean_start_date.json"), BRAND)
         self.assertIsNotNone(record)  # ad itself is still valid, just no date
         self.assertIsNone(record["started_at"])
+
+    def test_missing_collation_evidence_is_null_not_invented(self):
+        # image_ad_later_candidate.json has no collation_id/collation_count
+        # keys at all - must come through as None, never a fabricated 0/"".
+        record = normalize_ad(load("image_ad_later_candidate.json"), BRAND)
+        self.assertIsNotNone(record)
+        self.assertIsNone(record["collation_id"])
+        self.assertIsNone(record["collation_count"])
+        self.assertEqual(record["page_id"], "222222222222222")  # this one IS present
 
 
 class NormalizeAdsListTests(unittest.TestCase):
@@ -101,12 +111,13 @@ class NormalizeAdsListTests(unittest.TestCase):
             load("missing_id.json"),
             load("unsupported_media.json"),
             load("missing_media.json"),
-            load("video_ad.json"),
+            load("video_ad.json"),  # rejected: static-image-only contract
+            load("dpa_ad.json"),  # rejected: unsupported type
             load("carousel_ad.json"),
             load("duplicate_ad.json"),
         ]
         ads = normalize_ads(raw, BRAND, limit=20)
-        self.assertEqual([a["ad_id"] for a in ads], ["111111111111111", "444444444444444", "666666666666666"])
+        self.assertEqual([a["ad_id"] for a in ads], ["111111111111111", "666666666666666"])
 
     def test_empty_results(self):
         raw = load("empty_results.json")
@@ -114,7 +125,15 @@ class NormalizeAdsListTests(unittest.TestCase):
         self.assertEqual(ads, [])
 
     def test_limit_is_respected(self):
-        raw = [load("image_ad.json"), load("video_ad.json"), load("carousel_ad.json")]
+        # 4 distinct valid image ads, capped to 2 - actually exercises the
+        # cap (unlike a list that happens to contain exactly `limit` valid
+        # ads regardless of capping).
+        raw = [
+            load("image_ad.json"),
+            load("carousel_ad.json"),
+            load("image_ad_later_candidate.json"),
+            load("boolean_start_date.json"),
+        ]
         ads = normalize_ads(raw, BRAND, limit=2)
         self.assertEqual(len(ads), 2)
 
@@ -122,7 +141,7 @@ class NormalizeAdsListTests(unittest.TestCase):
 class ProviderErrorMessageTests(unittest.TestCase):
     def test_missing_key_raises_without_making_a_request(self):
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key="", company_name=BRAND, timeout=5)
+            fetch_company_ads(api_key="", page_id=PAGE_ID, country="US", media_type="IMAGE_AND_MEME", timeout=5)
         self.assertIn("SCRAPECREATORS_API_KEY", str(ctx.exception))
 
     def test_error_messages_never_contain_the_key_value(self):
@@ -137,6 +156,28 @@ class ProviderErrorMessageTests(unittest.TestCase):
                 self.assertNotIn("api_key", line)
 
 
+class RequestParametersTests(unittest.TestCase):
+    """Sequence D: verifies the real request uses the verified page ID and
+    the US/IMAGE_AND_MEME filters - not just that *some* request is made."""
+
+    @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
+    def test_request_uses_verified_page_id_country_and_media_type(self, mock_urlopen):
+        response = mock.MagicMock()
+        response.read.return_value = b'{"results": []}'
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        mock_urlopen.return_value = response
+
+        fetch_company_ads(api_key="key", page_id=PAGE_ID, country="US", media_type="IMAGE_AND_MEME", timeout=5)
+
+        sent_request = mock_urlopen.call_args[0][0]
+        self.assertIn(f"pageId={PAGE_ID}", sent_request.full_url)
+        self.assertIn("country=US", sent_request.full_url)
+        self.assertIn("status=ACTIVE", sent_request.full_url)
+        self.assertIn("media_type=IMAGE_AND_MEME", sent_request.full_url)
+        self.assertNotIn("companyName", sent_request.full_url)
+
+
 SECRET_KEY = "sk_test_should_never_appear_anywhere"
 
 
@@ -146,6 +187,11 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
     supplements the source-scan test above with what really happens at
     runtime for each failure mode."""
 
+    def _fetch(self, api_key=SECRET_KEY):
+        return fetch_company_ads(
+            api_key=api_key, page_id=PAGE_ID, country="US", media_type="IMAGE_AND_MEME", timeout=5
+        )
+
     @mock.patch("ad_fetcher.scrapecreators_client.time.sleep")
     @mock.patch("ad_fetcher.scrapecreators_client.urllib.request.urlopen")
     def test_auth_failure_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
@@ -153,7 +199,7 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
             "url", 401, "Unauthorized", {}, None
         )
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+            self._fetch()
         self.assertIn("401", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
@@ -164,7 +210,7 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
             "url", 500, "Internal Server Error", {}, None
         )
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+            self._fetch()
         self.assertIn("500", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
@@ -173,7 +219,7 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
     def test_timeout_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
         mock_urlopen.side_effect = TimeoutError()
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+            self._fetch()
         self.assertIn("timed out", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
@@ -182,7 +228,7 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
     def test_network_error_message_and_no_key_leak(self, mock_urlopen, _mock_sleep):
         mock_urlopen.side_effect = urllib.error.URLError("no route to host")
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+            self._fetch()
         self.assertIn("no route to host", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
 
@@ -195,7 +241,7 @@ class ProviderErrorBehaviorTests(unittest.TestCase):
         mock_urlopen.return_value = response
 
         with self.assertRaises(ScrapeCreatorsError) as ctx:
-            fetch_company_ads(api_key=SECRET_KEY, company_name=BRAND, timeout=5)
+            self._fetch()
         self.assertIn("malformed JSON", str(ctx.exception))
         self.assertNotIn(SECRET_KEY, str(ctx.exception))
 

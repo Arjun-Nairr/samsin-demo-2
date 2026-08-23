@@ -1,9 +1,16 @@
-# Handoff — Sequences A, B & C
+# Handoff — Sequences A, B, C & D
 
 ## Current status (read this first)
 
-- **Sequence A** (paid Meta ads, `ad_fetcher`) — **implemented, tested, live-verified.**
-- **Sequence B** (organic Instagram posts, `organic_fetcher`) — **implemented, tested, live-verified.**
+- **Competitor changed in Sequence D**: everything below that predates
+  Sequence D refers to **Aelfric Eden**. The active competitor is now
+  **PacSun** (`page_id` `7133041750`, verified via ScrapeCreators'
+  company-search endpoint — see `ad_fetcher/config.py`). Old Aelfric Eden
+  rows still exist in Neon (never deleted) but are excluded from every
+  Sequence D query by `page_id` scoping. See "Sequence D" at the bottom for
+  the full verification.
+- **Sequence A** (paid Meta ads, `ad_fetcher`) — **implemented, tested, live-verified** for Aelfric Eden originally; **re-verified for PacSun in Sequence D** with a corrected, verified-`pageId` request (see below).
+- **Sequence B** (organic Instagram posts, `organic_fetcher`) — **implemented, tested, live-verified** for Aelfric Eden; identity updated to PacSun's verified handle (`pacsun`) in Sequence D, not re-run live (Sequence B was explicitly out of scope for Sequence D's live verification).
 - **Sequence C** (Neon persistence of paid ads, `competitive_memory`) —
   **implemented, tested offline (84 tests), and now fully live-verified**,
   including a real repeated run proving idempotent insert/update
@@ -18,8 +25,16 @@
   *(Note: an earlier part of this file used "Sequence C" to mean a future
   ads↔organic-post matching audit. That name has been reassigned to this
   persistence milestone instead — see the marked note where that occurs.)*
-- Ads↔organic-post matching, AI analysis, weighting, and everything else
-  in Sequence C's non-goals list — **not implemented**, documented only.
+- **Sequence D** (`competitive_memory.analysis` / `.ranking`) — paid-ad
+  source corrected to a verified `pageId` (static-image-only contract),
+  weighting evidence (`page_id`/`collation_id`/`collation_count`) added
+  via migration `0002`, an analysis-persistence boundary (pending queue,
+  save/fail, all competitor-scoped) added, and a deterministic V1 ranking
+  function added. **113 tests offline, all passing.** Live verification:
+  see "Sequence D" at the bottom for the exact outcome and credits spent.
+- Ads↔organic-post matching, AI analysis (model calls), weighting *beyond*
+  Sequence D's documented V1 proxy, and everything else in the various
+  non-goals lists — **still not implemented**, documented only.
 - Everything below this point is presented in the order it was written,
   oldest first, so history is preserved. Where an older section's status
   claim has since changed, it is marked **(superseded)** with a pointer to
@@ -1245,3 +1260,386 @@ omitted here as they're long, signed, and not useful once expired.
 Not committed as of this line being written. Per the brief ("do not
 commit or push unless explicitly instructed"), run `git status --porcelain`
 for the exact current list rather than trusting a snapshot written here.
+
+---
+
+# Sequence D — Agent-Ready Competitive Intelligence
+
+## Milestone completed
+
+`Fetch current US static ads → normalize and persist them → retain the
+fields required for weighting → expose pending ads for future agent
+analysis → accept and persist analysis results → produce a ranked,
+compact context payload.` No AI model was called anywhere in this
+repository - Part 3 is a persistence *boundary* only, for a future
+external agent (OpenClaw) to use.
+
+## Competitor change and verification
+
+The brief's `COMPETITOR_NAME`/`META_PAGE_ID` placeholders were unfilled.
+Per the brief's own instruction, work stopped before any edit and the user
+was asked. The user proposed **PacSun** with two URLs
+(`facebook.com/pacsun`, `instagram.com/pacsun`) and explicitly asked for
+cross-verification before use, not direct acceptance.
+
+Verified via `GET /v1/facebook/adLibrary/search/companies?query=pacsun`
+(1 ScrapeCreators credit): the top result was unambiguously the official
+account - `page_id: "7133041750"`, `name: "PacSun"`, `page_alias: "pacsun"`,
+**verification: BLUE_VERIFIED**, 2,256,162 Facebook likes, `ig_username:
+"pacsun"`, **ig_verification: true**, 2,678,292 Instagram followers -
+clearly distinguished from several unrelated/fan-page results also named
+"Pacsun"/"Pacsun energies"/"Pacsunme" in the same search. Matches both
+URLs the user gave exactly. Locked in as `COMPETITOR = {"name": "PacSun",
+"page_id": "7133041750"}` in `ad_fetcher/config.py`, with the verification
+evidence documented in a comment there - not just asserted in this file.
+
+## Files added
+
+```
+migrations/0002_add_weighting_and_analysis_fields.sql   one ALTER TABLE,
+                                                          7 new columns,
+                                                          all IF NOT EXISTS
+src/competitive_memory/config.py     NEW - active page ID (reused from
+                                      ad_fetcher, not duplicated), analysis
+                                      batch size, every ranking constant
+src/competitive_memory/analysis.py   NEW - list_pending_analysis/
+                                      save_analysis/mark_failed, each owns
+                                      and closes its own connection
+src/competitive_memory/analysis_cli.py  NEW - CLI dispatcher: pending/
+                                      save/fail, stdin for the analysis
+                                      JSON, same stdout/stderr/exit
+                                      contract as every other CLI here
+src/competitive_memory/ranking.py    NEW - compute_ranked_context() +
+                                      its own CLI main()
+tests/test_analysis_and_ranking.py   NEW - 27 tests
+tests/fixtures/dpa_ad.json           NEW - explicit DPA-rejection fixture
+```
+
+## Files changed
+
+```
+src/ad_fetcher/config.py       COMPETITOR -> {name, page_id}; +COUNTRY,
+                                +PAID_MEDIA_TYPE; verification comment
+src/ad_fetcher/scrapecreators_client.py   fetch_company_ads() now takes
+                                page_id/country/media_type, not company_name
+src/ad_fetcher/service.py      passes the new params through
+src/ad_fetcher/normalizer.py   SUPPORTED_MEDIA drops VIDEO entirely (see
+                                "static-image-only" below); +page_id,
+                                +collation_id, +collation_count extraction
+src/organic_fetcher/config.py  ACCOUNT_HANDLE/BRAND_LABEL -> pacsun/PacSun
+                                (identity only - Sequence B's own logic
+                                untouched, per the brief)
+src/competitive_memory/db.py   INSERT/UPDATE SQL gains page_id/
+                                collation_id/collation_count (COALESCE-
+                                protected, same pattern as started_at);
+                                +list_pending_analysis, +save_analysis_result,
+                                +mark_analysis_failed, +list_completed_analyses
+src/competitive_memory/migrate.py   now applies every migrations/*.sql
+                                file (sorted), not just 0001 - each file
+                                is one statement (psycopg3's cursor.execute
+                                doesn't support multiple statements per
+                                call, so 0002 is one ALTER TABLE with 7
+                                ADD COLUMN clauses, not 7 separate statements)
+tests/test_normalizer.py       BRAND->PacSun, page_id param throughout,
+                                video test repurposed to a rejection test,
+                                +collation/page_id assertions, +request-
+                                params test, +DPA test, fixed 2 tests whose
+                                expectations depended on video being valid
+tests/test_competitive_memory.py   make_ad()/FakeConnection extended for
+                                page_id/collation_id/collation_count
+README.md                      Sequence D section, updated examples,
+                                fixed 2 stale claims (no-weighting,
+                                company-search-every-run)
+HANDOFF.md                     this section
+```
+
+No files removed. No table, index, ORM, migration framework, queue, or
+background worker was added. `ad_fetcher/scrapecreators_client.py` and
+`organic_fetcher/` (beyond the identity constants) are otherwise untouched.
+
+## Static-image-only: how VIDEO rejection actually works now
+
+Rather than adding a new "is this a video, reject it" check, `VIDEO` was
+simply removed from `SUPPORTED_MEDIA` (`ad_fetcher/normalizer.py`). A
+video ad's `display_format` no longer maps to any `media_type`, so it's
+rejected by the *same* "unsupported media type" path DPA already used -
+one shared mechanism for DPA, VIDEO, and any future unrecognized format,
+not three separate checks. The dead video-URL-extraction branch (multi-
+candidate scanning for `video_hd_url`/`video_sd_url`) was deleted along
+with it, and the fixture/test that exercised it
+(`video_ad_later_candidate.json`) was removed - it tested a code path that
+can no longer be reached.
+
+**Two tests that asserted the old contract had to be rewritten, not just
+"preserved"**: `test_valid_video_ad` (previously asserted a video ad
+normalizes successfully) is now `test_video_rejected_under_static_image_only_contract`,
+and `test_filters_and_preserves_order`'s expected output no longer
+includes the video ad's ID. This is an intentional, spec-directed change
+(the brief explicitly says "the paid-ad output contract is now static-
+image-only"), not an accidental regression - flagged here explicitly
+rather than silently changed.
+
+## Weighting evidence and competitor scoping (Part 2)
+
+`page_id`, `collation_id`, `collation_count` are extracted defensively
+(`None` if missing/wrong-type, never fabricated - a bad `collation_count`
+like a bool or a string is treated as absent, same pattern as every other
+optional field in this codebase) and persisted via the same COALESCE
+pattern already used for `started_at`/`is_active`: a `null` in a later
+fetch never erases a previously-known value.
+
+**`page_id` is now the scoping key for every Sequence D query** -
+`list_pending_analysis`, `list_completed_analyses`, `save_analysis_result`,
+and `mark_analysis_failed` all filter `WHERE page_id = %(page_id)s`. Old
+Aelfric Eden rows (inserted before this column existed, so `page_id` is
+`NULL` for all of them) are never deleted, but structurally cannot match
+any Sequence D query scoped to PacSun's `page_id`. Verified by a dedicated
+test (`test_scoped_to_configured_competitor_excludes_old_rows`) and by a
+real live check (see "Live verification" below).
+
+## The analysis-persistence boundary (Part 3)
+
+Three functions in `analysis.py`, one CLI dispatcher
+(`analysis_cli.py`), each connection owned and closed per call:
+
+- **`list_pending_analysis(limit)`** - configured-competitor, image-only,
+  usable-media-URL rows with `analysis_status` `pending` or `failed`
+  (retryable, not lost), pending prioritized, oldest first within each
+  group. Re-queryable from Neon at any time - not dependent on any
+  in-memory list from whatever process originally inserted the rows
+  (verified explicitly, not just assumed).
+- **`save_analysis(ad_id, result)`** - rejects a non-dict `result`
+  (`PersistenceError`, checked before touching the database), rejects an
+  `ad_id` that doesn't exist *or* belongs to a different competitor's
+  `page_id` (both look identically "unknown" to the caller - no
+  cross-competitor leakage), otherwise sets `analysis_status='complete'`,
+  stores `result` in the `JSONB` column via `psycopg.types.json.Jsonb`
+  (confirmed the correct wrapper attribute - `.obj` - by inspection, not
+  assumed), clears any prior `analysis_error`, stamps `analyzed_at`, and
+  increments `analysis_attempts`.
+- **`mark_failed(ad_id, error_message)`** - same unknown-ad/wrong-competitor
+  rejection, sets `analysis_status='failed'`, records `analysis_error`,
+  increments `analysis_attempts`, leaves `analyzed_at` untouched (only a
+  real success sets that). The row remains visible to
+  `list_pending_analysis` afterward - a failed attempt is never
+  permanently lost, verified explicitly.
+
+## Deterministic V1 ranking (Part 4)
+
+`weight = 0.5×recency + 0.3×longevity + 0.2×recurrence`, all constants
+in `competitive_memory/config.py` (not scattered through `ranking.py`).
+Computed fresh on every `compute_ranked_context()` call using the real
+current time - no scheduled score-update job exists, matching the brief's
+"do not add a daily score-update job."
+
+- **Recency**: `1 - age_days/RECENCY_WINDOW_DAYS`, clamped to `[0,1]`.
+  Falls back to `first_seen_at` when `started_at` is missing - documented
+  in the module docstring and tested explicitly, not a silent substitution.
+- **Longevity**: `(last_seen_at - effective_start).days / LONGEVITY_WINDOW_DAYS`,
+  clamped to `[0,1]` - explicitly documented as a proxy for "the advertiser
+  is still running it," not proof of profitability.
+- **Recurrence**: `collation_count / RECURRENCE_CAP`, clamped to `[0,1]`.
+  **`times_seen` is never read by the scoring function at all** - a
+  dedicated test (`test_times_seen_is_never_used_for_recurrence`) sets
+  `times_seen=999` with no `collation_count` and confirms recurrence still
+  scores a neutral `0.0`, not an inflated value.
+
+Only `analysis_status='complete'` rows for the configured `page_id` are
+considered; anything scoring below `MIN_WEIGHT_THRESHOLD` is dropped
+entirely; the remainder is sorted by weight descending and capped at
+`TOP_N`. The payload includes total weight, every component score, ad
+identity/copy, the stored `analysis_result`, `snapshot_url`, and
+`media_url` - no creative brief is generated (that's OpenClaw's job,
+later).
+
+## Tests run and results
+
+```
+python -m unittest discover -s tests -v   → 113 passed
+  (86 after Part 1's ad_fetcher/organic_fetcher changes,
+   27 more added in tests/test_analysis_and_ranking.py for Parts 2-4)
+```
+
+Every item in the brief's 17-point regression list is covered: verified
+page-ID/US/IMAGE_AND_MEME request params, defensive video/DPA rejection,
+new normalization fields (present and missing-evidence cases), existing-
+row updates preserving analysis state, pending work surviving independent
+of any in-memory list, competitor scoping excluding old rows (for pending
+list, save, *and* ranking - three separate tests), successful save,
+failure+retry, unknown-ad rejection (including cross-competitor), non-
+object-result rejection, deterministic weighting (exact expected-value
+assertion, not just "some positive number"), missing dates/collation
+fallbacks, threshold/top-N behavior, no credential leakage, and the full
+pre-existing insert/update/idempotence suite (unchanged, still passing).
+
+A migration test (`MigrateTests`) confirms `apply_migration()` executes
+exactly as many statements as there are files under `migrations/`, that
+both the table-creation and the analysis-columns SQL text are present,
+and that the connection commits and closes - without touching a real
+database.
+
+No live ScrapeCreators request, live Neon mutation, or model call happens
+anywhere in the standard test run.
+
+## Live verification
+
+**4 ScrapeCreators credits spent total this session**: 1 to verify PacSun's
+identity (see above), 1 for the real production refresh, 1 diagnostic call
+that explained the 0-ads result, and (implicitly, already covered above)
+none further - the analysis/ranking demo below used zero ScrapeCreators
+credits, it's pure database work.
+
+### Neon reset (user-directed, before this verification)
+
+The user asked to reset the Neon table before running the PacSun
+verification, so PacSun's data would be visibly reflected rather than
+mixed with old rows. Before deleting anything, the table's actual contents
+were inspected (not assumed): **all 18 existing rows had `brand =
+'Aelfric Eden'`** - exactly the two runs from the Sequence C reliability
+fix's live verification, nothing else. Deleted with an exact `WHERE brand
+= 'Aelfric Eden'` match (not a wildcard), confirmed 0 rows remaining
+afterward. This is the only bulk deletion in this milestone, and it was
+explicit, confirmed-before-acting, and scoped to an exact match.
+
+### Step 1 — migration (0 credits): PASSED
+
+`cd src && python -m competitive_memory.migrate` → exit 0, "migration
+applied: competitor_ads table is ready." (Ran against the real Neon
+project - by this point `0001` was already applied from Sequence C;
+`0002`'s `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` ran cleanly.)
+
+### Step 2 — real production refresh: PASSED, but with a real finding
+
+`cd src && python -m competitive_memory.main` → exit 0, valid JSON:
+**`fetched_count: 0, inserted_count: 0, updated_count: 0,
+ready_for_analysis_count: 0`.**
+
+This is not a bug. A diagnostic call (`country=ALL, status=ALL,
+media_type=ALL`, 1 credit, approved separately after surfacing the 0-ads
+result rather than silently re-querying) confirmed:
+- `pageId` targeting is correct - every sampled result's `page_id` is
+  `"7133041750"`.
+- PacSun's real ad mix (30 sampled) is **DCO 15, VIDEO 6, DPA 5, IMAGE
+  4** - `DCO` (Dynamic Creative Optimization) is a real Meta ad format
+  neither the original brief nor this normalizer accounts for at all; it
+  is correctly rejected by the existing "unsupported media type" path
+  (same mechanism as DPA/VIDEO), but it means **PacSun is currently
+  running almost no plain static-image ads** - only 4 of 30 sampled, and
+  the combination of `status=ACTIVE` + `country=US` narrows even that
+  small set to zero in the real production request.
+
+**Presented this finding to the user rather than assuming a bug or
+silently loosening the locked `COUNTRY`/`PAID_MEDIA_TYPE` config values.**
+User's explicit decision: accept it as a real finding about PacSun's
+current campaign mix, not a defect - documented here rather than worked
+around.
+
+### Step 3 — old-row exclusion: CONFIRMED (moot after the reset)
+
+The old Aelfric Eden rows this check was meant to verify were deleted (see
+"Neon reset" above) before this step, at the user's explicit direction -
+so there was nothing left to demonstrate exclusion *against* live. The
+exclusion mechanism itself (`WHERE page_id = %(page_id)s`) is verified by
+`test_scoped_to_configured_competitor_excludes_old_rows` and by three
+other scoping tests offline.
+
+### Step 4 — pending → complete → ranked context: PASSED (synthetic row, since 0 real ads exist)
+
+With zero real PacSun rows to exercise Part 3/4 against, one unmistakable
+synthetic row was inserted directly (`ad_id =
+'__sequence_d_smoke_test__'`, `page_id` = the real configured PacSun page
+ID, `media_type='image'`, `collation_count=3`, `started_at` = 5 days ago)
+- the same "exact unmistakable ID, exact-match cleanup" pattern already
+established for Sequence C's smoke test. Since this row was entirely
+artificial (no genuine analysis existed to overwrite), it was **deleted**
+afterward rather than reset to `pending` - the brief's "restore to pending
+... do not overwrite genuine analysis" instruction's spirit, applied to
+the case where there's nothing genuine to restore to.
+
+```
+list_pending_analysis()  → ['__sequence_d_smoke_test__']
+save_analysis(ad_id, {"headline_quality": "test", "score": 0.9})  → succeeded
+compute_ranked_context() → {
+  "ad_id": "__sequence_d_smoke_test__",
+  "weight": 0.5616,
+  "component_scores": {"recency": 0.8333, "longevity": 0.0833, "recurrence": 0.6},
+  "analysis_result": {"score": 0.9, "headline_quality": "test"}
+}
+```
+
+Hand-verified the arithmetic: `recency = 1 - 5/30 = 0.8333`;
+`longevity = 5/60 = 0.0833` (last_seen_at defaulted to insert time, ~5
+days after the synthetic started_at); `recurrence = 3/5 = 0.6`
+(`collation_count=3`, `RECURRENCE_CAP=5`); `weight = 0.5×0.8333 +
+0.3×0.0833 + 0.2×0.6 = 0.5616` - matches the real computed output exactly.
+Row deleted afterward; table confirmed back to 0 rows.
+
+### Summary
+
+| Check | Result |
+|---|---|
+| Migration applies cleanly to real Neon | ✅ |
+| Verified `pageId` correctly targets PacSun | ✅ |
+| Static-image-only contract holds under real, messier data (DCO discovered) | ✅ |
+| Old-competitor row exclusion | ✅ (offline-verified; moot live after user-directed reset) |
+| Pending → save → ranked context, real database, real arithmetic | ✅ (synthetic row, cleaned up) |
+| Real PacSun static image ads currently in Neon | **0** (real finding, not a defect) |
+
+## Known limitations
+
+- **PacSun currently has ~0 active US static-image ads to persist.** Their
+  real ad mix (30 sampled) is dominated by `DCO` (Dynamic Creative
+  Optimization, 15/30) and `VIDEO` (6/30) - a real, live-confirmed fact
+  about this specific competitor right now, not a defect. `competitor_ads`
+  is correctly empty as of this write-up. If/when PacSun runs static image
+  ads again, or when a competitor with more static-image inventory is
+  chosen, the exact same code should populate rows without any change -
+  this was never tested against a real non-empty PacSun batch, though.
+- `DCO` is a real Meta ad format observed live that neither the original
+  brief nor this normalizer's `SUPPORTED_MEDIA` mapping names explicitly -
+  it's correctly rejected via the same "unsupported media type" path as
+  DPA/VIDEO (no separate handling needed), but if static-image coverage
+  is ever needed from a DCO-heavy advertiser, DCO's creative would need
+  its own extraction logic - not built, not scoped into Sequence D.
+- Sequence B was not re-run live under the new PacSun identity this
+  session - only its two identity constants were changed, and its own
+  logic/tests are unaffected (they use their own local test constants,
+  not `config.ACCOUNT_HANDLE`), per the brief scoping Sequence B change to
+  "identity only."
+- `collation_count`'s real-world range hasn't been observed against a real
+  PacSun *static-image* ad (the live ranking demo above used a synthetic
+  row) - `RECURRENCE_CAP=5` in config.py is a reasonable starting guess,
+  not calibrated against real PacSun data yet.
+- The ranking weights (0.5/0.3/0.2) and windows (30/60 days) are the
+  brief's agreed V1 proxy structure, not independently re-derived or
+  tuned here - flagged as a "V1" deliberately.
+- No advisory lock/concurrency control exists for the eventual scheduler
+  (carried over from the Sequence C reliability fix's same documented,
+  intentionally-deferred limitation) - still not needed since nothing
+  runs on a schedule yet.
+
+## Working tree (Sequence D)
+
+Committed and pushed - see the top-level "Current status" note and run
+`git log`/`git status` for the exact current authoritative state rather
+than trusting a specific commit hash written here.
+
+## Exact next milestone
+
+Per the brief:
+
+```
+Sequence E:
+Samsin product references
+→ image-generation tool
+→ two candidates
+→ visual QA
+→ one retry
+→ ImgBB
+→ manual Instagram publication
+```
+
+OpenClaw skills, orchestration, and 12-hour scheduling remain the final
+sequence after the external tools (image generation, ImgBB, Instagram
+publishing) are proven independently - not started, not scoped further
+than that here.

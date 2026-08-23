@@ -18,10 +18,20 @@ import psycopg  # noqa: E402
 from competitive_memory import db  # noqa: E402
 from competitive_memory.service import refresh_competitive_memory  # noqa: E402
 
-BRAND = "Aelfric Eden"
+BRAND = "PacSun"
+PAGE_ID = "7133041750"
 
 
-def make_ad(ad_id, media_url="https://cdn.example/img.jpg", started_at="2026-01-01T00:00:00+00:00", is_active=True, body="body"):
+def make_ad(
+    ad_id,
+    media_url="https://cdn.example/img.jpg",
+    started_at="2026-01-01T00:00:00+00:00",
+    is_active=True,
+    body="body",
+    page_id=PAGE_ID,
+    collation_id=None,
+    collation_count=None,
+):
     return {
         "ad_id": ad_id,
         "brand": BRAND,
@@ -33,6 +43,9 @@ def make_ad(ad_id, media_url="https://cdn.example/img.jpg", started_at="2026-01-
         "started_at": started_at,
         "is_active": is_active,
         "snapshot_url": f"https://www.facebook.com/ads/library/?id={ad_id}",
+        "page_id": page_id,
+        "collation_id": collation_id,
+        "collation_count": collation_count,
     }
 
 
@@ -93,15 +106,22 @@ class FakeConnection:
                 "snapshot_url": params["snapshot_url"],
                 "started_at": params["started_at"],
                 "is_active": params["is_active"],
+                "page_id": params["page_id"],
+                "collation_id": params["collation_id"],
+                "collation_count": params["collation_count"],
                 "first_seen_at": self.now,
                 "last_seen_at": self.now,
                 "times_seen": 1,
                 "analysis_status": "pending",
+                "analysis_result": None,
+                "analysis_attempts": 0,
+                "analysis_error": None,
+                "analyzed_at": None,
                 "created_at": self.now,
                 "updated_at": self.now,
             }
             self._pending.append(("insert", params["ad_id"], row))
-        elif stripped.startswith("UPDATE"):
+        elif stripped.startswith("UPDATE") and "times_seen" in sql:
             ad_id = params["ad_id"]
             existing = self.table[ad_id]
             updated = dict(existing)
@@ -114,6 +134,9 @@ class FakeConnection:
             updated["snapshot_url"] = params["snapshot_url"]
             updated["started_at"] = params["started_at"] if params["started_at"] is not None else existing["started_at"]
             updated["is_active"] = params["is_active"] if params["is_active"] is not None else existing["is_active"]
+            updated["page_id"] = params["page_id"] if params["page_id"] is not None else existing["page_id"]
+            updated["collation_id"] = params["collation_id"] if params["collation_id"] is not None else existing["collation_id"]
+            updated["collation_count"] = params["collation_count"] if params["collation_count"] is not None else existing["collation_count"]
             updated["last_seen_at"] = self.now
             updated["times_seen"] = existing["times_seen"] + 1
             updated["updated_at"] = self.now

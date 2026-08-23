@@ -24,9 +24,15 @@ class ScrapeCreatorsError(Exception):
     includes the API key."""
 
 
-def fetch_company_ads(api_key: str, company_name: str, timeout: int) -> dict:
-    """GET the Company Ads endpoint for one company. Returns the parsed
-    JSON response body. Raises ScrapeCreatorsError on any failure.
+def fetch_company_ads(api_key: str, page_id: str, country: str, media_type: str, timeout: int) -> dict:
+    """GET the Company Ads endpoint for one verified page ID. Returns the
+    parsed JSON response body. Raises ScrapeCreatorsError on any failure.
+
+    Sequence D: fetches by pageId (verified via company-search, see
+    ad_fetcher/config.py) rather than a fuzzy companyName lookup, with
+    server-side country/media_type filters - country/media_type are
+    caller-supplied (from config), not hardcoded here, so this client stays
+    a thin, generic wrapper around the one endpoint.
     """
     if not api_key:
         raise ScrapeCreatorsError(
@@ -36,9 +42,10 @@ def fetch_company_ads(api_key: str, company_name: str, timeout: int) -> dict:
 
     params = urllib.parse.urlencode(
         {
-            "companyName": company_name,
-            "country": "ALL",
+            "pageId": page_id,
+            "country": country,
             "status": "ACTIVE",
+            "media_type": media_type,
         }
     )
     url = f"{API_BASE}{ADS_PATH}?{params}"

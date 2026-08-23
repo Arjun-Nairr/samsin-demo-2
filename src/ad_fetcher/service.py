@@ -9,7 +9,9 @@ def fetch_and_normalize() -> dict:
     api_key = config.get_api_key()
     raw = fetch_company_ads(
         api_key=api_key,
-        company_name=config.COMPETITOR["company_name"],
+        page_id=config.COMPETITOR["page_id"],
+        country=config.COUNTRY,
+        media_type=config.PAID_MEDIA_TYPE,
         timeout=config.REQUEST_TIMEOUT_SECONDS,
     )
 

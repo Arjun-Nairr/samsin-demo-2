@@ -1,6 +1,7 @@
-"""Applies migrations/0001_create_competitor_ads.sql. Not a migration
-framework - one plain SQL file, one small script, safe to re-run
-(CREATE TABLE IF NOT EXISTS), never destructive (no drops, no deletes).
+"""Applies every migrations/*.sql file, in sorted (numeric-prefix) order.
+Not a migration framework - no tracking table, no versioning state, just
+plain idempotent SQL files (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT
+EXISTS throughout) - safe to re-run, never destructive.
 
 Run: cd src && python -m competitive_memory.migrate
 """
@@ -12,15 +13,16 @@ import psycopg
 from . import db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-MIGRATION_PATH = PROJECT_ROOT / "migrations" / "0001_create_competitor_ads.sql"
+MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 
 
 def apply_migration() -> None:
-    sql = MIGRATION_PATH.read_text()
+    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
     conn = db.connect()
     try:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            for path in migration_files:
+                cur.execute(path.read_text())
         conn.commit()
     except psycopg.Error as exc:
         conn.rollback()

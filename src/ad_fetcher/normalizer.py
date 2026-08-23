@@ -9,11 +9,18 @@ into multiple records.
 
 Missing values are `None` (JSON null) for non-text fields and `""` for text
 fields, never invented.
+
+Sequence D: the paid-ad contract is now static-image-only. VIDEO is no
+longer a supported media_type - even though the provider is now asked for
+media_type=IMAGE_AND_MEME server-side (see scrapecreators_client.py), an
+unexpected video (or DPA, or anything else) must still be rejected
+defensively here, not trusted to have been filtered upstream. Dropping
+VIDEO from SUPPORTED_MEDIA means it's rejected via the same "unsupported
+media type" path as DPA - no separate check needed.
 """
 from datetime import datetime, timezone
 
 SUPPORTED_MEDIA = {
-    "VIDEO": "video",
     "IMAGE": "image",
     "MEME": "image",  # a MEME is an image variant per the documented schema
 }
@@ -28,6 +35,20 @@ def _first_http_url(*candidates) -> str | None:
         if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
             return candidate
     return None
+
+
+def _optional_text(value) -> str | None:
+    """For evidence fields (page_id/collation_id): a real non-empty string,
+    or None - never an empty string standing in for "missing"."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _optional_int(value) -> int | None:
+    """For collation_count: a real int, or None. bool excluded (subclass
+    of int) - not a real count."""
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
 
 
 def _resolve_creative(snapshot: dict) -> dict:
@@ -45,21 +66,13 @@ def _resolve_creative(snapshot: dict) -> dict:
     media_type = SUPPORTED_MEDIA.get(display_format)
 
     media_url = None
-    if media_type == "video":
-        videos = primary.get("videos") or snapshot.get("videos") or []
-        # Scan every candidate, not just the first - a malformed/URL-less
-        # first entry shouldn't hide a valid one further down the list.
-        for video in videos:
-            if not isinstance(video, dict):
-                continue
-            media_url = _first_http_url(video.get("video_hd_url"), video.get("video_sd_url"))
-            if media_url:
-                break
-    elif media_type == "image":
+    if media_type == "image":
         images = primary.get("images") or snapshot.get("images") or []
         # Real responses use original_image_url/resized_image_url, not the
         # "url" key shown in the docs' example - confirmed against a live
         # fetch. original_image_url preferred (full quality) over resized.
+        # Scan every candidate, not just the first - a malformed/URL-less
+        # first entry shouldn't hide a valid one further down the list.
         for image in images:
             if not isinstance(image, dict):
                 continue
@@ -93,7 +106,7 @@ def normalize_ad(raw: object, brand: str) -> dict | None:
 
     creative = _resolve_creative(snapshot)
     if creative["media_type"] is None:
-        return None  # reject unsupported media types
+        return None  # reject unsupported media types - includes DPA, VIDEO, anything else
     if not creative["media_url"]:
         return None  # reject records without a usable http/https media URL
 
@@ -123,6 +136,12 @@ def normalize_ad(raw: object, brand: str) -> dict | None:
         "started_at": started_at,
         "is_active": is_active,
         "snapshot_url": snapshot_url,
+        # Sequence D weighting evidence - persisted, never fabricated.
+        # Missing provider values stay None; do not substitute times_seen
+        # or invent a count anywhere downstream of this.
+        "page_id": _optional_text(raw.get("page_id")),
+        "collation_id": _optional_text(raw.get("collation_id")),
+        "collation_count": _optional_int(raw.get("collation_count")),
     }
 
 

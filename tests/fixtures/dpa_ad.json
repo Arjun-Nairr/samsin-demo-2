@@ -1,0 +1,18 @@
+{
+  "ad_archive_id": "DPA000000000001",
+  "is_active": true,
+  "start_date": 1750800000,
+  "page_id": "7133041750",
+  "page_name": "PacSun",
+  "collation_id": null,
+  "collation_count": null,
+  "title": null,
+  "snapshot": {
+    "body": { "text": "Dynamic product ad - not a static creative." },
+    "display_format": "DPA",
+    "cta_text": "Shop Now",
+    "cards": [],
+    "images": [{ "original_image_url": "https://scontent.xx.fbcdn.net/dpa-image.jpg" }],
+    "videos": []
+  }
+}

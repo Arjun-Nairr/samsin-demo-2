@@ -2,22 +2,35 @@
 
 No registry/factory/config-framework - there is exactly one competitor for
 Sequence A and it lives here as one dict.
+
+Verified competitor identity (Sequence D): resolved via ScrapeCreators'
+company-search endpoint, not guessed. The top result for query="pacsun"
+was unambiguously the official account - BLUE_VERIFIED on both platforms,
+2,256,162 Facebook likes, 2,678,292 Instagram followers, page_alias
+"pacsun", ig_username "pacsun" - clearly distinguished from several
+unrelated/fan-page results also named "Pacsun" in the same search. Cross-
+checked against the URLs the user gave (facebook.com/pacsun,
+instagram.com/pacsun) before being locked in here.
 """
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = PROJECT_ROOT / ".env"
 
-# ScrapeCreators' Company Ads endpoint accepts companyName directly (see
-# docs.scrapecreators.com/v1/facebook/adlibrary/company/ads) so no
-# company-search resolution call is needed for Sequence A. If a pageId is
-# ever verified via the search endpoint, swap it in here instead of
-# companyName - the client accepts either.
+# Sequence D: fetch by the verified Meta page ID directly, not a fuzzy
+# companyName lookup - see the verification note above.
 COMPETITOR = {
-    "company_name": "Aelfric Eden",
+    "name": "PacSun",
+    "page_id": "7133041750",
 }
 
-BRAND_LABEL = "Aelfric Eden"
+BRAND_LABEL = "PacSun"
+
+# Sequence D: the paid-ad output contract is now static-image-only, filtered
+# server-side too (see scrapecreators_client.py) - not just a defensive
+# normalizer check.
+COUNTRY = "US"
+PAID_MEDIA_TYPE = "IMAGE_AND_MEME"
 
 # Small useful batch per the spec - not a full crawl, no pagination.
 BATCH_SIZE = 20
