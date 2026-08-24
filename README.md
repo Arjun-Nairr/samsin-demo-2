@@ -1,8 +1,8 @@
 # Samsin Ad Intelligence
 
-Six small, mostly-independent pieces spanning competitor intelligence
-(ScrapeCreators + Neon) and Samsin's own creative production (Gemini +
-ImgBB + Instagram):
+Seven small, mostly-independent pieces spanning competitor intelligence
+(ScrapeCreators + Neon), Samsin's own creative production (Gemini +
+ImgBB + Instagram), and orchestration (OpenClaw):
 
 - **Sequence A** (`ad_fetcher`): paid Meta/Facebook ad-library ads for one
   hardcoded, verified competitor (currently **Billionaire Boys Club
@@ -29,12 +29,22 @@ ImgBB + Instagram):
   garment reference, and manually (dry-run by default) publishes a chosen
   candidate to Instagram. Entirely independent of the paid-ad pipeline
   above and of the old samsin-pricing-demo project — fresh code throughout.
+- **Sequence F** (`skills/samsin-ad-pipeline`, `pipeline_run`): an OpenClaw
+  skill that orchestrates Sequences C-E end to end (refresh → analyze →
+  rank → pick a product → brief → generate → select → publish-boundary)
+  without reimplementing any of them, run either manually or on OpenClaw's
+  own native 12-hour cron. `pipeline_run` is the one new piece of code
+  this needed: a small stdlib-only stale-aware exclusive run lock
+  (`.samsin_pipeline.lock`) so a manual run and the scheduled run can
+  never overlap.
 
-One provider call each (Sequences A-D), no pagination, no scheduling, no
-scoring beyond Sequence D's documented V1 weighting proxy, no autonomous
-visual/creative QA (a human always picks the candidate), no scheduled or
-automatic Instagram posting anywhere in this repository. See `HANDOFF.md`
-for design history and what's deferred.
+One provider call each (Sequences A-D), no pagination, no scoring beyond
+Sequence D's documented V1 weighting proxy, no autonomous visual/creative
+QA (a human/agent always picks the candidate, never an unattended
+critic), no automatic Instagram *publishing* anywhere by default -
+Sequence F's automation runs in `dry-run` mode until a human explicitly
+switches one job to `publish`. See `HANDOFF.md` for design history and
+what's deferred.
 
 ## Setup
 
@@ -553,6 +563,112 @@ since the last real publish (tracked in a local, gitignored
   (`IMGBB_API_KEY`, `IG_USER_ID`, `IG_LONG_LIVED_TOKEN`/`IG_SHORT_LIVED_TOKEN`,
   `IG_GRAPH_API_VERSION`, default `v21.0`) — never printed in any output or
   error message.
+
+## Sequence F — OpenClaw Orchestration
+
+Orchestrates Sequences C-E through an OpenClaw skill
+(`skills/samsin-ad-pipeline/SKILL.md`) - it describes tool order, inputs/
+outputs, and failure rules, and runs the existing CLIs directly. No
+provider logic, ranking, generation, or publishing code is duplicated
+here.
+
+### The one new piece of code: the run lock
+
+`src/pipeline_run/` is a small stdlib-only stale-aware exclusive lock so a
+manual invocation and the scheduled automation can never run at the same
+time:
+
+```bash
+cd src
+python -m pipeline_run.main acquire --run-id <id> --mode dry-run|publish
+python -m pipeline_run.main release
+```
+
+`.samsin_pipeline.lock` is created with `open(path, "x")` (atomic create-
+or-fail on both POSIX and Windows). A lock younger than 60 minutes blocks
+a new acquire; older than that, it's treated as stale, replaced, and
+reported as such. Everything else the skill needs - run-directory
+records, Neon's own `analysis_status` column, and OpenClaw's own cron run
+history - already exists; nothing else was built.
+
+### Installing/inspecting the skill
+
+```bash
+openclaw skills install "<repo>/skills/samsin-ad-pipeline" --as samsin-ad-pipeline
+openclaw skills list        # shows samsin-ad-pipeline as "ready"
+openclaw skills info samsin-ad-pipeline
+openclaw skills check
+```
+
+### The isolated agent and its permissions
+
+A dedicated OpenClaw agent (`samsin-pipeline`) runs this skill, workspace
+pinned to this repo, model pinned to `opencode-go/deepseek-v4-flash-vision-exp`:
+
+```bash
+openclaw agents add samsin-pipeline --workspace "<repo>" --model opencode-go/deepseek-v4-flash-vision-exp --non-interactive
+```
+
+Its tool policy is scoped down in `~/.openclaw/openclaw.json` to only
+`exec`, `read`, `write` (no browser, no messaging/channel tools, no other
+agent's sessions) - everything this pipeline needs to run the repo's
+Python CLIs and write run-directory files, nothing else:
+
+```json
+{ "agents": { "list": [ { "id": "samsin-pipeline", "tools": {
+  "allow": ["exec", "read", "write"],
+  "deny": ["edit", "apply_patch", "browser", "gateway", "process", "sessions_list", "sessions_send", "sessions_history", "session_status"]
+} } ] } }
+```
+
+(A `tools.profile` override is deliberately *not* set on this agent - a
+live run showed that pairing `profile: "minimal"` with an `allow` list
+strips every tool before the allow-list is even applied, leaving nothing
+callable. Leaving the profile unset inherits the already-scoped global
+`"coding"` profile, which the `allow`/`deny` pair then narrows further.)
+This does not touch the global exec policy (still whatever it was before
+this milestone) - only this one agent's tool surface changed.
+
+### The 12-hour automation
+
+```bash
+openclaw cron add --name samsin-ad-pipeline-12h \
+  --cron "0 */12 * * *" --tz Asia/Dubai \
+  --agent samsin-pipeline --model opencode-go/deepseek-v4-flash-vision-exp \
+  --thinking high --session isolated --tools exec,read,write \
+  --expect-final --message "Use the samsin-ad-pipeline skill. Run the pipeline in dry-run mode..."
+openclaw cron edit <id> --no-deliver --clear-channel --clear-to --clear-account   # no external delivery
+```
+
+Operational commands:
+
+```bash
+openclaw cron show <id>                          # schedule, next run, delivery
+openclaw cron status                             # scheduler-wide status
+openclaw cron runs --id <id>                      # durable run history (this IS the run history - no separate system)
+openclaw cron run <id> --wait --wait-timeout 30m  # force a run now and wait for it
+openclaw cron disable <id>                        # pause the schedule
+openclaw cron enable <id>                         # resume it
+openclaw daemon restart                           # restart the gateway safely (config changes need this)
+```
+
+**Known live-discovered quirks** (all worked around, not silently
+ignored):
+
+- The pinned model does not support an explicit `"high"` thinking level -
+  OpenClaw logs a warning and silently uses `"off"` for that call. Not a
+  code defect; the model/thinking pairing is simply unsupported.
+- `openclaw config`/`gateway status`/`daemon status`/`daemon restart`
+  reliably print their correct result and then hang on process exit in
+  this OpenClaw build/environment (`exit 124` after already succeeding).
+  Any script driving these must read stdout before the timeout, not treat
+  the timeout itself as failure.
+- Files the pipeline writes must use an explicit UTF-8 encoding
+  (documented in the skill) - a live run showed shell `>` redirection
+  under PowerShell defaults to UTF-16, which the rest of this repo's
+  tooling can't read as JSON without `encoding="utf-16"`.
+- `python` is ambiguous on this machine (three different installs on
+  PATH); the skill now pins the exact interpreter path it needs.
 
 ## Design notes
 

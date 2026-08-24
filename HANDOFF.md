@@ -2324,10 +2324,287 @@ behavior - output was read before the hang) and applied with
 - No Sequence F skill file, run lock, timestamped logs, resumable state,
   or offline tests exist yet - this section is infrastructure-only.
 
-## Next step
+## Next step (superseded - see below, Sequence F is now built and live-verified)
 
 Build the actual Sequence F OpenClaw skill (tool order, inputs/outputs,
 failure rules per the brief) that orchestrates the existing Python CLIs
 end to end, add the run lock + logs + resumable state, prove one manual
 dry run, then (only after that succeeds) configure the native `openclaw
-cron` schedule for every 12 hours in `Asia/Dubai`. Not started yet.
+cron` schedule for every 12 hours in `Asia/Dubai`.
+
+---
+
+# Sequence F — OpenClaw Orchestration (built and live-verified)
+
+## Status: DONE - one full dry-run proof, cron path proven, automation left enabled in dry-run
+
+The draft skill at `skills/samsin-ad-pipeline/SKILL.md` was treated as the
+intended workflow and executed largely as written - three small, live-
+discovered incompatibilities required editing the skill itself (all
+documented below with the exact evidence that forced each change), never
+its overall design.
+
+## Files added/changed
+
+```
+skills/samsin-ad-pipeline/SKILL.md   the draft skill, edited 3x for live
+                                      incompatibilities (see below)
+src/pipeline_run/__init__.py         new
+src/pipeline_run/lock.py             new - the one new piece of code:
+                                      stale-aware exclusive run lock
+src/pipeline_run/main.py             new - CLI (acquire/release), same
+                                      stdout/stderr/exit-code contract as
+                                      every other CLI in this repo
+tests/test_pipeline_lock.py          new - 4 focused tests (acquire/
+                                      release round-trip, fresh lock
+                                      blocks a second acquire, stale lock
+                                      is replaced and reported, release
+                                      with no lock is a no-op)
+.gitignore                           + .openclaw_runs/, .samsin_pipeline.lock,
+                                      + AGENTS.md/HEARTBEAT.md/IDENTITY.md/
+                                        SOUL.md/TOOLS.md/USER.md/
+                                        openclaw-workspace-state.json (see
+                                        "Stray files" below)
+README.md                            Sequence F section + updated intro
+```
+
+No custom resumable framework was built - run-directory JSON/log files
+(written directly by the agent per the skill's instructions), Neon's own
+`analysis_status` column, generated-creative manifests, and OpenClaw's
+own cron run history are the only state that exists. `pipeline_run` does
+exactly one job: the lock.
+
+## Offline tests
+
+`python -m unittest discover -s tests -v` → **159 passed, 0 failed** (155
+before this milestone + 4 new lock tests). No network, no live database,
+no API credits in the standard suite.
+
+## Environment setup (real, live-verified, not guessed)
+
+- OpenClaw's real command surfaces were inspected via `--help` before
+  anything was configured (`skills`, `cron`, `config`, `agents`,
+  `approvals`/`exec-policy`) - see the earlier "Sequence F — OpenClaw
+  Orchestration: Environment Setup" section above for the OpenCode Go
+  model wiring, which this milestone builds directly on top of.
+- **Skill installed via the real local-skill command**:
+  `openclaw skills install "<repo>/skills/samsin-ad-pipeline" --as samsin-ad-pipeline`
+  (also `--global` and default-workspace variants, for the main agent).
+  Verified three ways per the brief: `openclaw skills list` (shows
+  `✓ ready`), `openclaw skills info samsin-ad-pipeline` (`Visible to
+  model: yes`, `Available as command: yes`), `openclaw skills check`
+  (listed among the ready skills). Because the `samsin-pipeline` agent's
+  workspace *is* this repo, its skill install resolves straight to the
+  tracked `SKILL.md` file itself - one copy, no drift, edits take effect
+  immediately with no reinstall needed for that agent.
+- **Isolated agent**: `openclaw agents add samsin-pipeline --workspace
+  "<repo>" --model opencode-go/deepseek-v4-flash-vision-exp --non-interactive`
+  - a dedicated workspace + model, per the brief's "isolated" requirement.
+- **Permissions, scoped to only what's needed**: `agents.list[].tools` for
+  `samsin-pipeline` set to `allow: ["exec","read","write"]`, `deny:
+  ["edit","apply_patch","browser","gateway","process","sessions_list",
+  "sessions_send","sessions_history","session_status"]`. **One real,
+  live-discovered mistake corrected here**: an initial attempt paired
+  this `allow` list with `tools.profile: "minimal"`, which caused a real
+  run to fail immediately with `No callable tools remain after resolving
+  explicit tool allowlist ... no registered tools matched` - the
+  `"minimal"` profile strips almost every tool *before* the allow-list is
+  even applied, leaving nothing for `allow` to select from. Fixed by
+  leaving `tools.profile` unset for this agent (inheriting the
+  already-scoped global `"coding"` profile), which the `allow`/`deny`
+  pair then narrows correctly - verified by the very next forced run
+  succeeding end to end. The **global** exec policy was never touched -
+  only this one agent's tool surface changed, per "do not broadly weaken
+  OpenClaw security."
+- **The 12-hour automation**: `openclaw cron add --name
+  samsin-ad-pipeline-12h --cron "0 */12 * * *" --tz Asia/Dubai --agent
+  samsin-pipeline --model opencode-go/deepseek-v4-flash-vision-exp
+  --thinking high --session isolated --tools exec,read,write
+  --expect-final --message "Use the samsin-ad-pipeline skill. Run the
+  pipeline in dry-run mode..."`, then `openclaw cron edit <id>
+  --no-deliver --clear-channel --clear-to --clear-account` to remove the
+  default announce-delivery the `add` command otherwise attaches -
+  confirmed via `openclaw cron show <id>` printing `delivery: not
+  requested`. **Job id: `3caf23c9-7821-4538-9571-e7931e03aa61`.**
+
+## Live-discovered incompatibilities that required editing the skill (all 3, exact evidence)
+
+1. **Lock mechanism needed naming, not re-describing.** The draft
+   described lock semantics in prose without naming the concrete tool.
+   Pointed it at the real `pipeline_run.main acquire`/`release` CLI built
+   for this milestone - a necessary completion of the draft, not a design
+   change.
+2. **Bare `python` is ambiguous and unsafe on this machine.** A real run's
+   `exec` calls hit `CERTIFICATE_VERIFY_FAILED` fetching `shopsamsin.com`
+   - independently confirmed this repo's own interpreter
+   (`C:\Users\dwish\AppData\Local\Programs\Python\Python312\python.exe`)
+   has no such problem, but this machine has two other `python.exe` on
+   PATH (a Microsoft Store alias stub and a separate minimal install) and
+   the agent's exec sandbox was resolving one of those instead. The agent
+   self-diagnosed and worked around it live (injecting `SSL_CERT_FILE`
+   via `certifi.where()` and using `sys.executable`), but the skill now
+   pins the exact interpreter path so future runs never hit this at all.
+3. **Shell-redirected JSON files came out UTF-16, not UTF-8.** A real run
+   saved `ranked_context.json` via a plain `>` redirect under this
+   environment's default shell, which encodes it as UTF-16 - every other
+   tool in this repo (including Python's default `open(..., "r")`) reads
+   UTF-8 and would fail to parse it (confirmed live: `json.load` raised
+   `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff` on the exact
+   file, and re-reading it with `encoding="utf-16"` proved the content
+   itself was correct - purely an encoding-choice bug, not a data bug).
+   The skill now explicitly requires UTF-8 for every file it writes.
+
+No other part of the draft skill needed changing - the tool order, JSON
+schemas, dry-run/publish boundary, retry limits, and failure rules all
+matched real OpenClaw/CLI behavior as written.
+
+## Stray files from pointing the agent's workspace at this repo
+
+Because `samsin-pipeline`'s workspace is this repo root, OpenClaw seeded
+its standard workspace-identity scaffolding directly into the tracked
+tree on first run: `AGENTS.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`,
+`TOOLS.md`, `USER.md`, `openclaw-workspace-state.json`. These are
+OpenClaw's own onboarding templates, not project deliverables - added to
+`.gitignore` (not deleted, since the agent may rely on them existing
+locally) so they never get committed. A stray empty `src/refresh_stderr.log`
+debug artifact from one run was deleted (confirmed empty first).
+
+## The forced run: manual dry-run proof AND cron-path proof in one
+
+Per the brief, `openclaw cron run 3caf23c9-7821-4538-9571-e7931e03aa61
+--wait --wait-timeout 30m --expect-final` was used to force-run the
+installed automation immediately, rather than running the pipeline any
+other way - this exercises the exact same code path (isolated agent,
+pinned model, cron payload, session isolation) the 12-hour schedule will
+use, satisfying both proofs at once.
+
+**First attempt failed fast** (42.5s) with the tool-policy misconfiguration
+above - a real error, fixed, and confirmed fixed by the second attempt's
+full success rather than assumed fixed.
+
+**Second attempt: SUCCESS.** Total wall time **1,119,612 ms (~18.7
+minutes)** - most of it real per-stage LLM reasoning/tool-call round
+trips (each model call took 1.2-4.7s, and there are many per stage) plus
+the live SSL self-diagnosis detour above. `openclaw cron runs --id
+3caf23c9-...` confirms `"status": "ok"` durably in OpenClaw's own SQLite-
+backed run history - no separate run-history system was built, per the
+brief.
+
+### Authorized live batch spent (exact, matches the pre-authorized limits)
+
+- **1** ScrapeCreators refresh: 16 ads fetched, 16 updated (0 new - same
+  16 from the competitor-replacement milestone), confirmed in Neon.
+- **5** OpenCode vision analyses (the pre-authorized max): all 5 pending
+  ads analyzed and saved as `analysis_status = 'complete'` in Neon, real
+  JSON matching the required schema (`visual_style`, `composition`,
+  `colors`, `product_focus`, `cta_or_offer`, `reusable_inspiration`,
+  `confidence`) - e.g. ad `2360284104778799`: *"Clean studio back-view
+  shot on a plain white background..."*, `confidence: 0.63`.
+- **2** Gemini generations (the pre-authorized base amount), **0**
+  retries used (both candidates passed deterministic checks and vision
+  inspection on the first attempt - no retry needed, so the "up to 1
+  retry" budget went unused).
+- **1** ImgBB upload + Instagram container chain (the pre-authorized max),
+  in dry-run: real `image_url` (`https://i.ibb.co/G3cDCTkm/00decb4b75b5.png`),
+  real Instagram `creation_id` (`18094169072122080`) - container created
+  and polled to readiness, **never published**.
+- **0** real publications - exactly as required.
+
+### Real evidence produced (every item the brief asked to verify)
+
+- **Analyses saved**: 5/5 in Neon, `analysis_status='complete'`, real
+  vision content (see above).
+- **Ranked context**: `.openclaw_runs/<run-id>/ranked_context.json` - 5
+  scored entries, top weight `0.3842` (ad `4363411480576130`,
+  `recency=0.6692, longevity=0.1654, recurrence=0.0`).
+- **Selected real Samsin shirt**: **STAR T-SHIRT WHITE**
+  (`star-t-shirt-radiostar`, $38.90, in stock) - the same real product
+  Sequence E's live verification selected, confirming determinism, not
+  coincidence dressed up as one.
+- **Generated brief**: `creative_brief.json` - `tone: "basic streetwear
+  advertisement direction"`, caption grounded only in verified product
+  info (title + real store URL), no invented discounts/claims.
+- **Two candidates**: `generated_creatives/star-t-shirt-radiostar_b50a77c0/
+  candidate_1.png` and `candidate_2.png`, both `passed_checks: true`,
+  both simple, truthful, near-exact reproductions of the real garment
+  reference (a white tee with one red star) - correctly boring rather
+  than incorrectly embellished, matching "reliability over creative
+  quality."
+- **Vision selection**: candidate_1 chosen - reasoning recorded in
+  `run.log`: *"Both candidates passed deterministic checks... Vision
+  inspection: both faithfully preserve the white tee with a single red
+  star, no false text/claims... selected: candidate_1.png (clearer,
+  better-centered basic advertisement)."* No retry needed.
+- **Dry-run publication result**: see above - real ImgBB URL + real IG
+  `creation_id`, `published: false`.
+- **Lock removal**: confirmed via direct filesystem check immediately
+  after completion - `.samsin_pipeline.lock` does not exist.
+- **Run record**: `.openclaw_runs/samsin-dryrun-20260824T050525Z/run.json`
+  - `status: "complete"`, every path (`ranked_context_path`,
+  `brief_path`, `generated_manifest_path`, `selected_candidate_path`),
+  `selected_ad_ids`, `publication_mode`, `publication_result`,
+  `degraded_fallback: null`.
+- **OpenClaw automation run history**: `openclaw cron runs --id
+  3caf23c9-...` - two entries, the first attempt's real error and the
+  second attempt's `"status": "ok"`, both durable in OpenClaw's own
+  SQLite store, both including real token usage (second run:
+  64,841 input / 38,991 output tokens).
+
+## Automation left enabled, in dry-run, per the brief
+
+- **Job ID**: `3caf23c9-7821-4538-9571-e7931e03aa61`
+- **Schedule**: `0 */12 * * *`, timezone `Asia/Dubai`
+- **Next run**: `2026-08-24T12:04:12.833+04:00` (unaffected by the forced
+  run above - force-running a job does not reset its own schedule)
+- **Mode**: dry-run (the cron payload's message explicitly instructs
+  dry-run and forbids `--publish`; nothing in this milestone changed that)
+- **Delivery**: none (confirmed `delivery: not requested` via `cron show`)
+
+**Per the brief: stopping here. Explicit approval is required before
+changing this automation's payload to authorize `--publish`** - not
+requested, not assumed, not scheduled.
+
+## Operational commands
+
+```bash
+# Run manually right now
+openclaw cron run 3caf23c9-7821-4538-9571-e7931e03aa61 --wait --wait-timeout 30m --expect-final
+
+# Inspect status / logs
+openclaw cron show 3caf23c9-7821-4538-9571-e7931e03aa61
+openclaw cron runs --id 3caf23c9-7821-4538-9571-e7931e03aa61
+cat .openclaw_runs/<run-id>/run.log
+
+# Disable the 12-hour schedule
+openclaw cron disable 3caf23c9-7821-4538-9571-e7931e03aa61
+
+# Re-enable it
+openclaw cron enable 3caf23c9-7821-4538-9571-e7931e03aa61
+
+# Restart the gateway safely after any config change
+openclaw daemon restart
+```
+
+## Known limitations
+
+- The pinned model does not support OpenClaw's `"high"` thinking level -
+  silently downgraded to `"off"` for every call (a real, logged warning,
+  not a defect in this repo's code). Reasoning quality was still
+  sufficient to complete every stage correctly.
+- `openclaw config`/`gateway status`/`daemon status`/`daemon restart`
+  print correct output and then hang on process exit in this
+  environment - worked around throughout (read stdout before the
+  timeout), not fixed upstream.
+- The whole forced run took ~18.7 minutes, dominated by real per-stage
+  LLM round trips rather than the underlying CLIs (which are each fast
+  standalone) - this is the cost of routing every stage through agent
+  reasoning instead of a plain script, as the brief specifically asked
+  for.
+- Total token usage for the successful run was substantial (64,841 input
+  / 38,991 output tokens) - a real operating cost of this design worth
+  knowing before scaling to more frequent schedules.
+
+## Git status
+
+Committed and pushed once verification above succeeded - see `git log`/
+`git status` for the authoritative current state.

@@ -3,3 +3,17 @@ __pycache__/
 *.pyc
 generated_creatives/
 .manual_publish_state.json
+.openclaw_runs/
+.samsin_pipeline.lock
+
+# OpenClaw seeds these workspace-identity files automatically because the
+# samsin-pipeline isolated agent's workspace is this repo root - not
+# project deliverables, never commit them.
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+openclaw-workspace-state.json
+skills/samsin-ad-pipeline/.openclaw/
