@@ -2608,3 +2608,173 @@ openclaw daemon restart
 
 Committed and pushed once verification above succeeded - see `git log`/
 `git status` for the authoritative current state.
+
+---
+
+# Sequence F — Quality-floor rule, real publish, automation switched to `publish`
+
+## Status: DONE - quality floor verified live, one real Instagram post published, automation now enabled in publish mode
+
+## 1. Minimum quality rule added to the skill
+
+Added to `skills/samsin-ad-pipeline/SKILL.md` (step 5's brief-creation
+section, and referenced again in step 7's selection criteria), verbatim
+per the brief:
+
+> "The generated creative must visibly differ from the source catalog
+> image. Require a contrasting textured or colored background, directional
+> shadows, dynamic framing, and 1-2 neutral streetwear props. No models,
+> rendered text, invented branding, prices, discounts, or unsupported
+> claims."
+
+No critic and no broader prompt system were built - the rule is one
+paragraph folded into the existing brief the skill already writes; the
+existing generator/checks/vision-selection code was not touched.
+
+## 2. Dry-run proof with the quality floor (before any publish)
+
+Automation `3caf23c9-7821-4538-9571-e7931e03aa61` was left in `dry-run`
+and force-run once with `--wait --wait-timeout 30m --expect-final`
+(background task, ~19.5 minutes wall time). Real batch spent: 1
+ScrapeCreators refresh (16 fetched, 16 updated), 5 fresh vision analyses
+(the previous 5 were already `complete` from the prior milestone - these
+were 5 *different* ads: `1527692169102922, 1053724563735587,
+1343771564289858, 1005023052406196, 1527318075674011`, all saved
+`complete` in Neon), 2 Gemini generations, **0 retries** (both candidates
+cleared the quality floor on the first attempt), 1 ImgBB/Instagram
+dry-run chain, 0 real publications.
+
+**Real, visible result**: both candidates moved from the previous
+milestone's plain-white-background reproduction to genuinely different
+compositions - `candidate_1` (selected): angled flat-lay on a textured
+concrete floor against a brick wall, real directional shadow, neutral
+streetwear props (a sneaker, a wallet on a chain). `candidate_2`: top-down
+flat-lay on concrete with a strong diagonal shadow and different props (a
+beanie, jeans). Both preserved the real shirt (white tee, single red
+star) with no alterations, no rendered text, no invented branding/prices.
+Vision selection reasoning (from `run.log`): *"Both candidates passed
+deterministic checks... both preserve white tee + single red star, no
+false text/claims; both clear the minimum quality rule (contrast bg,
+shadows, props). selected: candidate_1.png (clearer, more dynamic angled
+basic advertisement)."*
+
+Run record: `run_id samsin-dryrun-20260824T094322Z`, `status:
+"complete"`, same real product (**STAR T-SHIRT WHITE**, deterministic
+re-selection - same as the prior milestone, confirming this isn't
+coincidence), dry-run publish result `dry_run: true, published: false`,
+real ImgBB URL (`https://i.ibb.co/C3yd4m0J/e6eb976f2d1a.png`) and real
+Instagram `creation_id` (`18094174427122080`, container created+polled,
+never published). Lock released cleanly. OpenClaw's own cron run history
+shows this as its 3rd durable entry, `status: "ok"`, `durationMs:
+1171400`.
+
+**One real speed improvement observed**: the Sequence F environment-setup
+milestone's SSL/interpreter fix (pinning the exact `python.exe` path)
+worked - this run's product-selection stage (Stage 4) completed in one
+pass with no certificate-probe detour, unlike the previous milestone's
+run which needed several minutes of live self-diagnosis. Confirmed by
+comparing `run.log` timings directly, not assumed.
+
+## 3. Real publication (user-approved, executed via the existing CLI directly)
+
+After the user reviewed the selected candidate and brief and gave
+explicit approval, the *exact* reviewed candidate and brief from the
+dry-run above were published - **not regenerated, not a different image**:
+
+```bash
+cd src
+python -m manual_publishing.main \
+  --image "../.openclaw_runs/samsin-dryrun-20260824T094322Z/selected_candidate.png" \
+  --brief "../.openclaw_runs/samsin-dryrun-20260824T094322Z/creative_brief.json" \
+  --publish
+```
+
+Preflight confirmed before running: `.samsin_pipeline.lock` did not
+exist; the 180-second cooldown had cleared (last real publish was
+`2026-08-23T17:51:16Z`, ~12 hours earlier, per
+`.manual_publish_state.json`).
+
+**Real result** (first attempt, no ambiguity, no retry needed):
+
+```json
+{
+  "dry_run": false,
+  "image_url": "https://i.ibb.co/C3yd4m0J/e6eb976f2d1a.png",
+  "creation_id": "18094263854122080",
+  "published": true,
+  "media_id": "18085151822677887"
+}
+```
+
+The ImgBB URL is identical to the dry run's - the exact same image bytes
+were uploaded again and ImgBB's content-addressed hosting returned the
+same URL; the Instagram `creation_id` and resulting `media_id` are new
+and real, from a genuinely new container/publish call, not reused.
+
+**Media ID and permalink verified read-only** (a `GET`, not a mutating
+call) immediately after:
+
+```json
+{
+  "id": "18085151822677887",
+  "permalink": "https://www.instagram.com/p/DcbQOT0jCgS/",
+  "media_type": "IMAGE",
+  "timestamp": "2026-08-24T14:15:06+0000"
+}
+```
+
+**A real, permanent post is now live**: https://www.instagram.com/p/DcbQOT0jCgS/
+on `test.account4289`. Not reversible from this codebase - would need
+manual deletion on Instagram if ever unwanted.
+
+## 4. Automation switched from `dry-run` to `publish`
+
+Per the brief, the automation was **not** force-run again after the
+manual publish above (the reviewed image was already published - running
+it again would risk a second, different, unreviewed post). Only its
+payload message was edited via `openclaw cron edit --message "..."`,
+authorizing the pipeline to pass `--publish` on its own future scheduled/
+forced runs. Everything else was explicitly preserved and confirmed
+unchanged via `openclaw cron edit`'s own returned JSON and a follow-up
+`openclaw cron show`:
+
+- **Schedule**: `0 */12 * * *` - unchanged
+- **Timezone**: `Asia/Dubai` - unchanged
+- **Session**: `isolated` - unchanged
+- **Agent**: `samsin-pipeline` (the scoped isolated agent) - unchanged
+- **Model**: `opencode-go/deepseek-v4-flash-vision-exp`, thinking `high`
+  (still silently downgraded to `off` per the known model limitation) -
+  unchanged
+- **Delivery**: `{"mode": "none"}` - unchanged, still no external
+  delivery
+- **Tools**: `exec, read, write` allow-list - unchanged
+
+**Job ID**: `3caf23c9-7821-4538-9571-e7931e03aa61`
+**Next scheduled run**: `2026-08-25T00:04:12+04:00` (unaffected by
+today's activity - force-running or editing a job's message does not
+reset its own schedule)
+**Enabled**: yes, in **publish** mode
+
+The next time this automation runs (scheduled or forced), it will
+attempt a real Instagram publish using whatever product/candidate that
+run's own pipeline selects - not a re-post of today's image.
+
+## Known limitation carried forward
+
+The next scheduled/forced run will be a **new, unreviewed** publish - no
+human approval gate exists between the automation's own candidate
+selection and its publish call once the job is in `publish` mode (this
+was explicit in the brief: "leave the automation enabled in publish
+mode," not "add an approval gate"). Anyone re-enabling or force-running
+this job should be aware it will publish without asking again.
+
+## Offline tests
+
+`python -m unittest discover -s tests -v` → **159 passed, 0 failed** -
+no new tests needed (the quality-floor rule is skill-file prose, not
+new code).
+
+## Git status
+
+Committed and pushed once this section's evidence above was confirmed -
+see `git log`/`git status` for the authoritative current state.

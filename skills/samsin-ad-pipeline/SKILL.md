@@ -125,6 +125,13 @@ Write `creative_brief.json` in the run directory with only:
 
 Do not introduce discounts, scarcity, prices, products, people, logos, slogans, or claims absent from the inputs. The image prompt must remain text-free as enforced by the existing generator.
 
+**Minimum quality rule** (part of the brief's `notes`, not a separate
+critic or prompt system): the generated creative must visibly differ from
+the source catalog image. Require a contrasting textured or colored
+background, directional shadows, dynamic framing, and 1-2 neutral
+streetwear props. No models, rendered text, invented branding, prices,
+discounts, or unsupported claims.
+
 ### 6. Generate two candidates
 
 From `src/`, run the existing generator with the run-directory brief/product files and the selected garment image:
@@ -137,9 +144,9 @@ The command must return exactly two candidates. Do not call Gemini again unless 
 
 ### 7. Select a candidate
 
-Reject candidates that failed deterministic checks. Inspect passing images with the configured vision model and select the clearer basic advertisement that best preserves the real shirt and avoids false text/claims.
+Reject candidates that failed deterministic checks. Inspect passing images with the configured vision model and select the clearer basic advertisement that best preserves the real shirt, avoids false text/claims, and clears the minimum quality rule above (visibly differs from the source catalog image via background/shadow/framing/props - not just a plain reproduction of the garment reference).
 
-If no candidate is acceptable, allow exactly one existing-command retry:
+If neither candidate clears the quality floor, allow exactly one existing-command retry:
 
 ```text
 python -m creative_generation.main retry --run-dir <generated-run-dir>
