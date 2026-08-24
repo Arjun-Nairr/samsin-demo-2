@@ -20,3 +20,14 @@ REQUEST_TIMEOUT_SECONDS = 15
 # flat-lay photography); this list exists for when/if that changes, not
 # because it's been observed working here.
 MODEL_IMAGE_ALT_KEYWORDS = ("model", "wearing", "on-body", "on body", "lifestyle")
+
+# Automatic model-photo classification (above) has nothing to classify
+# right now - Samsin's whole catalog has zero alt-text-tagged model
+# images (confirmed live). Building real classification (e.g. vision-
+# based) is a documented future improvement, not done here. For this one
+# demo product, the correct official model photo was manually confirmed
+# against the live storefront and is hardcoded as a known-good override -
+# not invented, not guessed, not a locally-committed screenshot.
+KNOWN_MODEL_REFERENCES = {
+    "star-t-shirt-radiostar": "https://shopsamsin.com/cdn/shop/files/big-star-min.png?v=1769512693",
+}

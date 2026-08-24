@@ -2777,4 +2777,223 @@ new code).
 ## Git status
 
 Committed and pushed once this section's evidence above was confirmed -
+see below for the next milestone; this line is stale once that lands.
+
+---
+
+# Sequence F — Model-preservation quality milestone (hardcoded product/model, single-ad inspiration)
+
+## Status: DONE - real manual dry-run succeeded, preservation passed, cron switched back to dry-run first as required
+
+## 0. Cron switched to dry-run before any testing
+
+Per the brief, `openclaw cron edit 3caf23c9-7821-4538-9571-e7931e03aa61
+--message "..."` was run first, restoring the dry-run instruction (no
+`--publish` anywhere) before any code/skill changes were tested. No
+second cron job was created; nothing was published. Confirmed via
+`openclaw cron show` both before and after this milestone's real dry-run
+- schedule/tz/agent/model/no-delivery all unchanged throughout.
+
+**Observed during this session**: the real 12-hour schedule fired on its
+own partway through (`0 */12 * * *` @ `Asia/Dubai` = 08:00/20:00 UTC) -
+a genuine unattended scheduled run, using dry-run mode (since it was
+switched back before this fired), landing in
+`.openclaw_runs/samsin-dryrun-20260824T080506Z/`. Not force-run, not
+touched, left as further real proof the schedule itself works
+autonomously.
+
+## 1. Hardcoded product and model reference
+
+- Product: always `star-t-shirt-radiostar` (STAR T-SHIRT WHITE) - the
+  real catalog is still fetched live (`samsin_reference.main`), just
+  filtered to this one handle instead of picking any in-stock T-shirt.
+- Garment reference: unchanged - the same `garment_image_urls[0]` used
+  in every prior milestone
+  (`.../StarT-Shirt-Radiostar.jpg?v=1769512693`).
+- Model reference: hardcoded as
+  `samsin_reference.config.KNOWN_MODEL_REFERENCES["star-t-shirt-radiostar"]`
+  = `https://shopsamsin.com/cdn/shop/files/big-star-min.png?v=1769512693`
+  (the official URL the user supplied - no screenshot was committed,
+  nothing was invented). Confirmed live: this URL loads a real 164,513-byte
+  PNG showing the actual Samsin model wearing the white star tee.
+  Confirmed against the real catalog fetch that Samsin's own automatic
+  model-photo classification (`model_image_urls`) is still empty for
+  this product (`big-star-min.png` shows up only in
+  `garment_image_urls`, uncategorized) - automatic classification
+  remains a documented future improvement, not built.
+- One focused test added (`test_samsin_reference.py`,
+  `KnownModelReferencesTests`) pins this exact URL so it can't silently
+  drift.
+
+## 2. Analysis narrowed to exactly one model-led ad, with an expanded schema
+
+`analysis_cli pending 1` (was `pending 5`). The schema changed from the
+old `visual_style/composition/colors/product_focus/cta_or_offer/
+reusable_inspiration/confidence` shape to:
+
+```json
+{
+  "pose_and_body_orientation": "...",
+  "camera_crop_and_angle": "...",
+  "model_styling": "...",
+  "dominant_colors_and_treatment": ["..."],
+  "background": "...",
+  "lighting": "...",
+  "overall_visual_style": "...",
+  "reusable_samsin_inspiration": ["..."],
+  "confidence": 0.0
+}
+```
+
+`competitive_memory.ranking` is still run (unchanged, existing Sequence D
+behavior preserved) but is **no longer the brief's inspiration source** -
+live-confirmed this session that its top-ranked entry was a *different*,
+older-schema ad (recency/longevity weighting, not analysis freshness,
+drives rank), which would have silently defeated the whole point of this
+milestone had the brief kept pulling from it. The brief now sources
+`competitor_inspiration` and a new `source_competitor_ad_id` field
+directly from the one ad analyzed in step 2.
+
+## 3. Removed the hardcoded prohibition against models
+
+Two places in the skill previously banned "people"/models outright (the
+Sequence E-era brief-schema note, and the quality-floor rule added last
+milestone). Both were edited: the brief-schema note now clarifies the
+real, hardcoded Samsin model reference is not an "invented person" (only
+*additional* invented people remain banned), and the quality-floor rule
+dropped "No models" from its list.
+
+## 4. Gemini prompt: model/garment preservation is now the highest priority
+
+`creative_generation/generator.py`'s `build_prompt()` gained a
+`model_reference` parameter; when present, it inserts a dedicated
+HIGHEST-PRIORITY paragraph (before tone/notes/competitor_inspiration)
+stating that preserving the model's identity (face, hair, clothing) and
+the shirt's exact color/graphic/fit outranks any competitor-inspired
+styling, and that preservation wins if they conflict. Two focused tests
+added (`test_model_reference_adds_identity_preservation_priority`,
+`test_no_model_reference_omits_identity_preservation_language`) plus one
+end-to-end test confirming `generate_candidates` actually threads
+`model_reference` into the built prompt
+(`test_model_reference_is_recorded_and_flows_into_the_prompt`).
+
+## 5. Candidate vision review: hard rejections added
+
+Step 7 now explicitly hard-rejects (not just deprioritizes) any candidate
+showing model-identity drift, altered shirt graphics/colors, or invented
+text/claims - and the existing "select the first passing candidate on
+inconclusive vision inspection" fallback was narrowed so it can **never**
+apply to a hard rejection. If every candidate (including the one retry)
+is hard-rejected, the skill now says to stop, preserve every artifact,
+and report the failure rather than silently picking a rejected image.
+
+## 6. Offline tests
+
+`python -m unittest discover -s tests -v` → **163 passed, 0 failed** (159
++ 4 new: 1 in `test_samsin_reference.py`, 3 in
+`test_creative_generation.py`). No Neon schema change, no provider
+replacement, no pipeline redesign, no Python speed refactor - exactly as
+scoped.
+
+## 7. Real manual dry-run (executed directly, not via cron/OpenClaw agent)
+
+Per the brief, this was run as **one real manual dry-run** - the CLIs
+were executed directly in sequence (not dispatched through the OpenClaw
+agent/cron), matching "Do not publish or force-run the cron." Run id
+`samsin-dryrun-manual-20260824T151550Z`. Total wall time **632 seconds
+(~10m32s)** - `2026-08-24T15:15:50Z` → `2026-08-24T15:26:22Z`, noticeably
+faster than the agent-orchestrated runs (~19min) since there were no
+per-step LLM round trips.
+
+**Source competitor ad ID**: `1097516573233938` (Billionaire Boys Club
+Icecream, "Billionaire Boys Club Fall '26 now available.") - confirmed
+model-led on inspection (a real model in a studio portrait).
+
+**Extracted pose/colors/style** (from the real expanded analysis):
+straight-on, centered, eye-level waist-up studio portrait; hands clasped
+at waist; cornrow braids with lightened tips; black corduroy jacket
+covered in embroidered club-style patches; smooth vertical navy-to-blue
+gradient backdrop (not flat white); even soft studio lighting with a
+subtle hair highlight; clean editorial lookbook style, not lifestyle/
+candid.
+
+**Exact final Gemini prompt** (verbatim, from the real manifest):
+
+```text
+Create a photorealistic Instagram product photo for the T-shirt "STAR T-SHIRT WHITE".
+Preserve the exact color, fit, graphic, and any branding shown in the attached garment reference image(s) exactly as they appear - do not alter, redesign, or reinterpret the shirt's actual design.
+HIGHEST PRIORITY: a real Samsin model reference image is attached. Preserve that exact model's identity - face, hair, and clothing - and this exact Star T-shirt's color, graphic, and fit, unaltered. Any competitor pose or styling referenced below is inspiration only, never a requirement: if following it would change the model's identity or the shirt's actual design, preservation wins and that competitor cue is skipped.
+Creative tone/direction: basic streetwear advertisement direction.
+Simple, clean product-focused composition grounded in the selected product: the real Samsin model (from the official model reference) wearing the white short-sleeve T-shirt with a single red star graphic, front-facing and centered. Minimum quality rule: the creative must visibly differ from the source catalog image - require a contrasting textured or colored background (not plain white), directional shadows, dynamic framing, and 1-2 neutral streetwear props. No rendered text, no invented branding, no prices, discounts, or unsupported claims.
+Competitor creative context, for style/mood inspiration only - never copy any competitor logo, layout, or on-image text: From ad 1097516573233938 (Billionaire Boys Club Icecream, Fall '26): a straight-on, centered, eye-level studio portrait crop (waist-up), against a smooth vertical navy-to-lighter-blue gradient backdrop rather than flat white, with even soft studio lighting and a subtle highlight on the hair. Reuse the gradient-backdrop idea and the clean centered crop as general inspiration only - never copy the competitor's actual patches, logos, or colorway.
+Do not include any price, discount, promotional claim, watermark, or any text of any kind rendered into the image.
+Output a single portrait image, exactly 1080x1350 pixels (4:5 Instagram feed ratio).
+```
+
+**Model and shirt preservation: PASSED.** Both candidates depicted the
+same real Samsin model (same long dark hair, same facial structure/skin
+tone as the model reference) wearing the exact white tee with the exact
+red star graphic, unaltered, against a blue gradient backdrop with
+directional shadow and props (skateboard, sneakers, a bag) - a real,
+visible departure from the flat-white source catalog photo while keeping
+model and garment identity intact. No rendered/legible text on either
+image. **No retry was needed** - both candidates cleared every
+hard-rejection check on the first attempt. One soft (non-blocking)
+observation: 3 props appeared versus the "1-2" guideline - noted, not a
+rejection criterion, did not affect selection. Selected: `candidate_1.png`.
+
+**One real, transient failure encountered and diagnosed (not
+identity/garment-related)**: the first dry-run publish attempt (stage 8)
+got a real Instagram Graph API `HTTP 400` on container creation. This was
+**not** treated as an "ambiguous publish to never retry" - it occurred
+before any publish call, in dry-run mode, so nothing irreversible was at
+risk. Diagnosed live with a standalone script replaying the identical
+image/caption/container-creation call before touching the real CLI
+again: it succeeded immediately, confirming a transient provider blip,
+not a code defect. The real CLI was then re-run unmodified and succeeded
+cleanly: `dry_run: true, published: false`, real ImgBB URL
+(`https://i.ibb.co/Fk36n938/ac20da240e6e.png`), real Instagram
+`creation_id` (`18094281635122080`, created+polled, never published).
+
+Lock released cleanly (`lock released at 2026-08-24T15:26:22Z`,
+confirmed by direct filesystem check afterward - `.samsin_pipeline.lock`
+does not exist). Run record: `run.json`, `status: "complete"`.
+
+## Live batch spent (real costs, this milestone's own dry-run only)
+
+1 ScrapeCreators refresh, 1 vision analysis (down from 5 - a real cost
+reduction from this milestone), 2 Gemini generations, 0 retries, 2
+ImgBB uploads + 2 Instagram container creations (1 from the transient-
+failure diagnostic, 1 from the successful real CLI run - both dry-run,
+neither published), 0 real publications.
+
+## Cron left in dry-run, unchanged otherwise
+
+`openclaw cron show 3caf23c9-7821-4538-9571-e7931e03aa61` confirmed after
+this milestone: schedule `0 */12 * * *` @ `Asia/Dubai`, agent
+`samsin-pipeline`, model `opencode-go/deepseek-v4-flash-vision-exp`,
+delivery `not requested`, `last: 7h ago, status: ok` (the real unattended
+scheduled run noted in section 0) - all exactly as before. Not force-run
+by this milestone.
+
+## Known limitations
+
+- Automatic Shopify model-photo classification is still not built
+  (documented future improvement, unchanged from Sequence E) - this
+  product's model reference is a manual, verified override, not a
+  general solution for other products.
+- The "1-2 neutral streetwear props" quality-floor guideline is
+  advisory, not a hard-rejection criterion - live-confirmed this session
+  when a real candidate had 3 props and was still correctly selected
+  (only identity drift, garment alteration, and invented text/claims are
+  hard rejections).
+- The transient Instagram `HTTP 400` (section 7) was diagnosed as
+  provider-side, not reproduced as a persistent issue - if it recurs
+  consistently in a future session, that would need real investigation
+  rather than assuming "transient" again.
+
+## Git status
+
+Committed and pushed once the evidence above was confirmed - see `git
+log`/`git status` for the authoritative current state.
 see `git log`/`git status` for the authoritative current state.

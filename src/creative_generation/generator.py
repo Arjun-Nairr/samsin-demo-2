@@ -34,7 +34,7 @@ def load_reference_bytes(path_or_url: str) -> bytes:
     return Path(path_or_url).read_bytes()
 
 
-def build_prompt(creative_brief: dict, product: dict) -> str:
+def build_prompt(creative_brief: dict, product: dict, model_reference: str | None = None) -> str:
     tone = creative_brief.get("tone", "")
     notes = creative_brief.get("notes", "")
     competitor_inspiration = creative_brief.get("competitor_inspiration", "")
@@ -45,6 +45,16 @@ def build_prompt(creative_brief: dict, product: dict) -> str:
         "attached garment reference image(s) exactly as they appear - do not "
         "alter, redesign, or reinterpret the shirt's actual design.",
     ]
+    if model_reference:
+        lines.append(
+            "HIGHEST PRIORITY: a real Samsin model reference image is attached. "
+            "Preserve that exact model's identity - face, hair, and clothing - "
+            "and this exact Star T-shirt's color, graphic, and fit, unaltered. "
+            "Any competitor pose or styling referenced below is inspiration "
+            "only, never a requirement: if following it would change the "
+            "model's identity or the shirt's actual design, preservation wins "
+            "and that competitor cue is skipped."
+        )
     if tone:
         lines.append(f"Creative tone/direction: {tone}.")
     if notes:
@@ -127,7 +137,7 @@ def generate_candidates(
     api_base = config.get_gemini_api_base()
     num_candidates = num_candidates or config.NUM_CANDIDATES
 
-    prompt = build_prompt(creative_brief, product)
+    prompt = build_prompt(creative_brief, product, model_reference)
     reference_images = [load_reference_bytes(garment_reference)]
     if model_reference:
         reference_images.append(load_reference_bytes(model_reference))

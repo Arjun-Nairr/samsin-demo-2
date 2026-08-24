@@ -63,42 +63,44 @@ Allow at most one ScrapeCreators refresh per pipeline run. Save its JSON output 
 Run:
 
 ```text
-python -m competitive_memory.analysis_cli pending 5
+python -m competitive_memory.analysis_cli pending 1
 ```
 
-Analyze at most five returned ads using their real copy and `media_url`. Inspect the image with the configured vision model. Save exactly this JSON shape for each ad:
+Analyze exactly the one returned ad (not five - one model-led competitor ad is the only generation inspiration this pipeline uses) using its real copy and `media_url`. Prefer an ad that actually shows a model wearing the product; if the one pending ad returned doesn't, analyze it anyway (never invent a different one) and note that plainly. Inspect the image with the configured vision model. Save exactly this JSON shape:
 
 ```json
 {
-  "visual_style": "short evidence-based description",
-  "composition": "short description",
-  "colors": ["dominant color"],
-  "product_focus": "what receives visual emphasis",
-  "cta_or_offer": "observed CTA/offer or none",
-  "reusable_inspiration": ["general pattern that Samsin may reinterpret"],
+  "pose_and_body_orientation": "short evidence-based description",
+  "camera_crop_and_angle": "short description",
+  "model_styling": "short description of the model's clothing/hair/styling as shown",
+  "dominant_colors_and_treatment": ["dominant color or color-grading note"],
+  "background": "short description",
+  "lighting": "short description",
+  "overall_visual_style": "short description",
+  "reusable_samsin_inspiration": ["general pattern that Samsin may reinterpret"],
   "confidence": 0.0
 }
 ```
 
 `confidence` must be between 0 and 1. Describe only visible or supplied evidence. Do not claim performance, copy a competitor layout, or include competitor branding as inspiration.
 
-Write each analysis to a run-directory JSON file, then pipe that file to:
+Write the analysis to a run-directory JSON file, then pipe that file to:
 
 ```text
 python -m competitive_memory.analysis_cli save <ad_id>
 ```
 
-If one ad cannot be downloaded or analyzed, run `analysis_cli fail` with a short safe reason and continue with the remaining ads. Never include URLs with signed query strings, tokens, or credentials in the error.
+If the ad cannot be downloaded or analyzed, run `analysis_cli fail` with a short safe reason and record the degraded fallback (empty competitor inspiration) rather than substituting a different ad. Never include URLs with signed query strings, tokens, or credentials in the error.
 
 ### 3. Rank context
 
-Run:
+Run (unchanged, existing Sequence D behavior - preserved even though this pipeline no longer uses its output as the brief's inspiration source):
 
 ```text
 python -m competitive_memory.ranking
 ```
 
-Use at most the first five ranked entries. If none exist, continue in degraded mode with empty competitor inspiration and state that clearly in the run log; do not fabricate context.
+This still reflects all completed analyses in Neon, old-schema and new-schema alike, and remains useful on its own. It is **not** where step 5's `competitor_inspiration` comes from - that's built directly from the single ad just analyzed in step 2, identified by its real `ad_id`, so the brief carries forward that ad's own concrete observations rather than an aggregate.
 
 ### 4. Select a Samsin product
 
@@ -108,7 +110,18 @@ Run:
 python -m samsin_reference.main
 ```
 
-Choose one real in-stock T-shirt with at least one garment image. Prefer a simple product and its first garment image. Save the selected product object unchanged as `product.json`. Do not invent availability, price, images, or claims.
+**Hardcoded for this demo**: the product is always `star-t-shirt-radiostar`
+(STAR T-SHIRT WHITE). Select that exact handle from the real returned
+catalog - do not pick a different product, and do not skip the real fetch
+(price/availability/garment image still come from the live call, never
+invented). Save the selected product object unchanged as `product.json`.
+
+The matching official model reference for this one product is hardcoded
+in `samsin_reference.config.KNOWN_MODEL_REFERENCES["star-t-shirt-radiostar"]`
+(a real, manually-confirmed Samsin storefront URL - automatic model-photo
+classification is a documented future improvement, not built here since
+Samsin's catalog otherwise has zero classified model images). Read that
+value and carry it forward as `model_reference` for steps 5-7.
 
 ### 5. Create the brief
 
@@ -118,33 +131,41 @@ Write `creative_brief.json` in the run directory with only:
 {
   "tone": "basic streetwear advertisement direction",
   "notes": "simple composition guidance grounded in the selected product",
-  "competitor_inspiration": "general patterns summarized from ranked analyses, never a copy",
+  "source_competitor_ad_id": "<the ad_id analyzed in step 2>",
+  "competitor_inspiration": "concrete observations from that one ad's analysis - pose, crop/angle, styling, colors, background, lighting - never generic 'streetwear' language",
   "caption": "truthful caption using only verified product information"
 }
 ```
 
-Do not introduce discounts, scarcity, prices, products, people, logos, slogans, or claims absent from the inputs. The image prompt must remain text-free as enforced by the existing generator.
+`competitor_inspiration` must read like it came from that specific ad
+(reference its actual pose, crop, colors, lighting, etc. from step 2's
+analysis), not a generic mood summary. Do not introduce discounts,
+scarcity, prices, products, logos, slogans, or claims absent from the
+inputs. The Samsin model reference itself is not an "invented person" -
+it's the real, hardcoded official Samsin photo for this product; never
+add any *other* person or model. The image prompt must remain text-free
+as enforced by the existing generator.
 
 **Minimum quality rule** (part of the brief's `notes`, not a separate
 critic or prompt system): the generated creative must visibly differ from
 the source catalog image. Require a contrasting textured or colored
 background, directional shadows, dynamic framing, and 1-2 neutral
-streetwear props. No models, rendered text, invented branding, prices,
-discounts, or unsupported claims.
+streetwear props. No rendered text, invented branding, prices, discounts,
+or unsupported claims.
 
 ### 6. Generate two candidates
 
-From `src/`, run the existing generator with the run-directory brief/product files and the selected garment image:
+From `src/`, run the existing generator with the run-directory brief/product files, the selected garment image, and the hardcoded model reference from step 4:
 
 ```text
-python -m creative_generation.main generate --brief <brief-file> --product <product-file> --garment <garment-url>
+python -m creative_generation.main generate --brief <brief-file> --product <product-file> --garment <garment-url> --model-reference <model-reference-url>
 ```
 
-The command must return exactly two candidates. Do not call Gemini again unless step 7 authorizes the single retry.
+Both references are passed through to the existing generator unchanged - it already supports `--model-reference`, nothing new was built here. The command must return exactly two candidates. Do not call Gemini again unless step 7 authorizes the single retry.
 
 ### 7. Select a candidate
 
-Reject candidates that failed deterministic checks. Inspect passing images with the configured vision model and select the clearer basic advertisement that best preserves the real shirt, avoids false text/claims, and clears the minimum quality rule above (visibly differs from the source catalog image via background/shadow/framing/props - not just a plain reproduction of the garment reference).
+Reject candidates that failed deterministic checks. Inspect passing images with the configured vision model and reject any candidate showing obvious model-identity drift (a different face, hair, or person than the model reference), altered shirt graphics/colors (not the real white tee with the exact star graphic), or invented text/claims - these are hard rejections, not preferences. Among the remaining candidates, select the clearer basic advertisement that best preserves the real model and shirt and clears the minimum quality rule above (visibly differs from the source catalog image via background/shadow/framing/props - not just a plain reproduction of the garment reference).
 
 If neither candidate clears the quality floor, allow exactly one existing-command retry:
 
@@ -152,7 +173,7 @@ If neither candidate clears the quality floor, allow exactly one existing-comman
 python -m creative_generation.main retry --run-dir <generated-run-dir>
 ```
 
-Do not retry again. If semantic vision inspection fails but a candidate passed deterministic checks, select the first passing candidate and record the degraded fallback.
+Do not retry again. If semantic vision inspection is merely inconclusive (not a hard rejection) but a candidate passed deterministic checks, select the first passing candidate and record the degraded fallback. **This fallback never applies to a hard rejection** (model-identity drift, altered shirt graphics/colors, or invented text/claims) - if every candidate, including the one retry, is hard-rejected, stop the run, record the rejection reasons and preserve every candidate/manifest for inspection, and report the failure rather than silently selecting a rejected image.
 
 ### 8. Publish boundary
 

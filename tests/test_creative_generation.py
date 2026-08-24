@@ -53,6 +53,17 @@ class BuildPromptTests(unittest.TestCase):
         self.assertNotIn("%", prompt)
         self.assertNotIn("$", prompt)
 
+    def test_model_reference_adds_identity_preservation_priority(self):
+        prompt = generator.build_prompt(BRIEF, PRODUCT, model_reference="https://example.com/model.png")
+        self.assertIn("HIGHEST PRIORITY", prompt)
+        self.assertIn("model's identity", prompt)
+        self.assertIn("preservation wins", prompt)
+
+    def test_no_model_reference_omits_identity_preservation_language(self):
+        prompt = generator.build_prompt(BRIEF, PRODUCT, model_reference=None)
+        self.assertNotIn("HIGHEST PRIORITY", prompt)
+        self.assertNotIn("model's identity", prompt)
+
 
 class ImageChecksTests(unittest.TestCase):
     def test_valid_png_matching_dimensions(self):
@@ -124,6 +135,8 @@ class GenerateCandidatesTests(unittest.TestCase):
 
         self.garment_path = Path(self.tmp.name) / "garment.jpg"
         self.garment_path.write_bytes(b"fake-garment-bytes")
+        self.model_path = Path(self.tmp.name) / "model.jpg"
+        self.model_path.write_bytes(b"fake-model-bytes")
 
     def _mock_generate_image(self, *_args, **_kwargs):
         return fake_png(config.CANDIDATE_WIDTH, config.CANDIDATE_HEIGHT)
@@ -141,6 +154,16 @@ class GenerateCandidatesTests(unittest.TestCase):
         self.assertIn("prompt", manifest)
         manifest_file = list(Path(self.tmp.name).glob("*/manifest.json"))
         self.assertEqual(len(manifest_file), 1)
+
+    def test_model_reference_is_recorded_and_flows_into_the_prompt(self):
+        with mock.patch("creative_generation.generator.generate_image", side_effect=self._mock_generate_image):
+            with mock.patch.object(config, "get_gemini_api_key", return_value="k"):
+                manifest = generator.generate_candidates(
+                    BRIEF, PRODUCT, str(self.garment_path), str(self.model_path), num_candidates=1
+                )
+
+        self.assertEqual(manifest["model_reference"], str(self.model_path))
+        self.assertIn("HIGHEST PRIORITY", manifest["prompt"])
 
     def test_resize_normalizes_a_differently_sized_model_output(self):
         # Confirmed live: Gemini doesn't reliably honor the exact requested

@@ -572,16 +572,29 @@ outputs, and failure rules, and runs the existing CLIs directly. No
 provider logic, ranking, generation, or publishing code is duplicated
 here.
 
-**Status: live.** The 12-hour automation (job id
-`3caf23c9-7821-4538-9571-e7931e03aa61`) is enabled in **publish** mode.
-A real, permanent Instagram post from this pipeline is live:
-https://www.instagram.com/p/DcbQOT0jCgS/ (media id `18085151822677887`)
-on `test.account4289`. The skill's brief-creation step includes a
+**Status: live, currently in dry-run.** The 12-hour automation (job id
+`3caf23c9-7821-4538-9571-e7931e03aa61`) has published once for real
+(https://www.instagram.com/p/DcbQOT0jCgS/, media id `18085151822677887`,
+on `test.account4289`) and was then switched back to `dry-run` for a
+follow-on quality milestone - check `openclaw cron show
+3caf23c9-7821-4538-9571-e7931e03aa61` for the live current mode rather
+than trusting this file. The skill's brief-creation step includes a
 minimum quality rule (contrasting background, directional shadows,
 dynamic framing, 1-2 neutral streetwear props - the creative must
-visibly differ from the source catalog photo) - see `HANDOFF.md`'s
-"Quality-floor rule, real publish, automation switched to publish"
-section for the full before/after evidence.
+visibly differ from the source catalog photo).
+
+**Product/model demo is hardcoded**: `star-t-shirt-radiostar` (STAR
+T-SHIRT WHITE) with its real garment reference and a manually-confirmed
+official Samsin model photo (`samsin_reference.config.KNOWN_MODEL_REFERENCES`)
+- both references are passed to the generator, and preserving that exact
+model's identity and the shirt's real design is the generator's highest
+prompt priority, ahead of any competitor-inspired styling. Competitor
+inspiration is now exactly one freshly-analyzed, model-led ad per run
+(not five aggregated ones), with its `ad_id` recorded on the brief.
+Automatic Shopify model-photo classification remains a documented future
+improvement, not built. See `HANDOFF.md`'s Sequence F sections for the
+full before/after evidence, including the quality-floor rollout and this
+model-preservation milestone.
 
 ### The one new piece of code: the run lock
 

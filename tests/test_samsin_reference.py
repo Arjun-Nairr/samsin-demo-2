@@ -10,6 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from samsin_reference import config  # noqa: E402
 from samsin_reference.catalog import build_tshirt_catalog, is_tshirt, normalize_product  # noqa: E402
 from samsin_reference.client import SamsinFetchError  # noqa: E402
 from samsin_reference.service import fetch_tshirt_catalog  # noqa: E402
@@ -19,6 +20,18 @@ FIXTURES = Path(__file__).parent / "fixtures_samsin"
 
 def load(name):
     return json.loads((FIXTURES / name).read_text())
+
+
+class KnownModelReferencesTests(unittest.TestCase):
+    def test_star_t_shirt_radiostar_has_the_confirmed_official_model_reference(self):
+        # Automatic model-photo classification is a documented future
+        # improvement (Samsin's catalog has zero alt-text-tagged model
+        # images) - this one product's override was manually confirmed
+        # against the live storefront, not guessed.
+        self.assertEqual(
+            config.KNOWN_MODEL_REFERENCES["star-t-shirt-radiostar"],
+            "https://shopsamsin.com/cdn/shop/files/big-star-min.png?v=1769512693",
+        )
 
 
 class IsTshirtTests(unittest.TestCase):
