@@ -2182,3 +2182,152 @@ this milestone.
 
 Committed and pushed once verification above succeeded - see `git log`/
 `git status` for the authoritative current state.
+
+---
+
+# Sequence F — OpenClaw Orchestration: Environment Setup (in progress)
+
+## Status: environment/model verified, orchestration skill NOT built yet
+
+This section covers only the OpenClaw/OpenCode tooling verification and
+model configuration required before any Sequence F skill/cron code could
+be written. **No skill files, run-lock, logs, resumable state, or tests
+have been added to this repo yet** - that is the next step, not done
+here. Nothing in `samsin-ad-intelligence` changed as part of this section
+except this documentation; all the work below happened in the local
+machine's OpenClaw config (`~/.openclaw/openclaw.json`), outside any git
+repo.
+
+## What was inspected (per the brief: no guessing at commands/formats)
+
+- **OpenClaw**: already installed globally via npm, `2026.7.1-2 (0790d9f)`.
+  Real supported command surfaces inspected directly (`--help` on `skills`,
+  `cron`, `config`, `models`, `daemon`) before any config was touched -
+  confirmed OpenClaw has its own native `cron` subcommand (add/enable/
+  disable/list/run/runs/status), so the brief's "do not use a second
+  scheduler unless OpenClaw lacks one" is satisfied by using it directly.
+  `openclaw skills list/install/info` confirmed as the real skill-file
+  mechanism (not guessed).
+- **OpenCode**: not installed or referenced anywhere on this machine at
+  the start of this session (not on PATH, not in global npm, no
+  "opencode" model in OpenClaw's catalog). Per the brief's explicit stop
+  condition, this was reported as a blocker and **not** worked around
+  with a fake substitute. Installed properly once authorized: `npm i -g
+  opencode-ai` (same trusted npm registry as `openclaw` itself, not a
+  piped shell-install script), then its own `postinstall.mjs` (read
+  first, confirmed it only fetches the platform-specific binary
+  sub-package from npm - no curl-to-shell) was run manually since
+  `--allow-scripts` had blocked it automatically. Verified working:
+  `opencode --version` -> `1.18.21`.
+
+## OpenCode Go vs OpenCode Zen (real distinction, not interchangeable)
+
+Read directly from `opencode.ai/docs/zen` and `opencode.ai/docs/go`
+before configuring anything:
+
+- **Zen** is OpenCode's pay-as-you-go model gateway (any model, billed
+  per request).
+- **Go** is a separate, cheaper flat subscription ($5 first month, then
+  $10/month) scoped to a curated list of open coding models, with its
+  own endpoint namespace (`https://opencode.ai/zen/go/v1/...`, model ids
+  of the form `opencode-go/<model-id>`) and its own usage limits (5hr/
+  weekly/monthly dollar caps).
+
+The user explicitly needed **Go**, not Zen - confirmed before wiring
+anything, since the two use different endpoints/ids and would silently
+misroute if confused.
+
+## Model configured: `opencode-go/deepseek-v4-flash-vision-exp`
+
+Chosen because Sequence F's Part 7 (selecting the better Gemini candidate
+using model vision) needs a vision-capable reasoning model, and this is
+the vision-capable member of the Go model family per OpenCode's own docs
+(`DeepSeek V4 Flash Vision Exp`, billed with image tokens per their
+pricing page).
+
+**Two real, live-discovered config bugs found and fixed** (not guessed -
+found via actual error output each time):
+
+1. Setting `agents.defaults.model.primary` to the new model id alone was
+   not enough - OpenClaw errored with `Unknown model: ... Found
+   agents.defaults.models[...], but no matching
+   models.providers["opencode-go"].models[] entry`. Fixed by adding an
+   explicit `models.providers.opencode-go.models[]` catalog entry
+   (`id`, `name`, `input: ["text","image"]`) matching the exact schema
+   from `openclaw config schema`.
+2. Once that catalog entry existed but without an explicit `api`/
+   `baseUrl`, real requests silently routed to `https://api.openai.com/v1/responses`
+   (a live 401 - wrong provider entirely, not an auth problem).
+   Root-caused via the actual `model-fetch` debug line in the error
+   output, not assumed. Fixed by setting
+   `models.providers.opencode-go.api: "openai-completions"` and
+   `.baseUrl: "https://opencode.ai/zen/go/v1"` explicitly, matching
+   OpenCode Go's documented `/v1/chat/completions` endpoint shape.
+
+Auth itself needed no new wiring - the user's own prior `openclaw
+onboard`/`configure` session had already stored a real OpenCode Go key in
+OpenClaw's native auth-profile store (`auth.profiles["opencode-go:default"]`,
+backed by `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`, not a
+plaintext config field). No key was ever printed or committed anywhere;
+an `OPENCODE_API_KEY` env var was also set as a Windows user env var
+during initial troubleshooting but turned out to be unused once the
+existing auth profile was confirmed sufficient - left in place, harmless,
+not referenced by any committed config.
+
+Config changes were applied by editing `~/.openclaw/openclaw.json`
+directly (not via the `openclaw config set` CLI) after every
+`openclaw config`/`openclaw gateway status`/`openclaw daemon status`
+invocation was observed to print its real, correct output and then hang
+indefinitely on process teardown in this environment (`exit 124` after
+already succeeding) - a real, reproducible harness quirk in this OpenClaw
+build, not a config or logic bug. Every edit was validated with
+`openclaw config validate` (which itself exhibits the same print-then-hang
+behavior - output was read before the hang) and applied with
+`openclaw daemon restart` (Windows Scheduled Task-backed gateway service).
+
+## Live verification
+
+1. `openclaw models list --provider opencode-go` -> 21 models listed,
+   `opencode-go/deepseek-v4-flash-vision-exp` shown with `Auth: yes`,
+   tags `default,configured`.
+2. Real text+image smoke test: downloaded one genuine BBC/Icecream ad
+   image already persisted in Neon (from the competitor-replacement
+   milestone), ran `openclaw infer model run --model
+   opencode-go/deepseek-v4-flash-vision-exp --file <the real ad jpg>
+   --prompt "Describe in one sentence what is visually depicted in this
+   image."` -> real `status=200` from
+   `https://opencode.ai/zen/go/v1/chat/completions`, real output: "A
+   young man with dark dreadlocks stands on a concrete sidewalk against a
+   textured beige wall, wearing a pink 'ICECREAM' t-shirt, baggy blue
+   denim shorts, white socks, and chunky pink sneakers while looking off
+   to the side." - correctly read the real brand name and real garment
+   color off the real image, confirming both routing and vision
+   capability work end to end before any orchestration code was written.
+
+## Known limitations / what's still open
+
+- OpenClaw's own doctor still flags real, pre-existing gaps unrelated to
+  this model fix: no command owner configured
+  (`commands.ownerAllowFrom`), gateway auth using a bare token rather
+  than a hardened setup, and (at the very start of this session) a
+  missing session-store directory - the last one appears to have
+  resolved itself once the gateway was actually started/restarted
+  (`~/.openclaw/state` now has real session state files), but was never
+  independently re-verified as fixed by this session's own doctor run.
+- The print-then-hang behavior on `openclaw config`/`gateway status`/
+  `daemon status`/`daemon restart` was worked around (read stdout before
+  the timeout kills the process) but not fixed - if this repo's future
+  Sequence F skill/cron work shells out to any of these commands
+  directly, it must apply the same workaround (a bounded timeout that
+  treats "printed valid output, then hung" as success) rather than
+  treating a non-zero/timeout exit code as failure.
+- No Sequence F skill file, run lock, timestamped logs, resumable state,
+  or offline tests exist yet - this section is infrastructure-only.
+
+## Next step
+
+Build the actual Sequence F OpenClaw skill (tool order, inputs/outputs,
+failure rules per the brief) that orchestrates the existing Python CLIs
+end to end, add the run lock + logs + resumable state, prove one manual
+dry run, then (only after that succeeds) configure the native `openclaw
+cron` schedule for every 12 hours in `Asia/Dubai`. Not started yet.
